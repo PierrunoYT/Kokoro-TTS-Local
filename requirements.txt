@@ -10,6 +10,7 @@ espeakng-loader  # For loading espeak-ng library
 phonemizer-fork  # For phoneme generation
 wheel  # For building packages
 setuptools  # For installing packages
+maturin  # Build dependency for underthesea-core
 num2words  # For number to word conversion
 spacy  # For text processing
 tqdm  # Progress bars
