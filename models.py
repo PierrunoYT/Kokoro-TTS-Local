@@ -340,7 +340,7 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
                         repo_id="hexgrad/Kokoro-82M",
                         filename=f"voices/{voice_file}",
                         local_dir=temp_file.name + "_dir",
-                        force_download=True,
+                        force_download=False,
                         revision=repo_version,
                         local_files_only=OFFLINE_MODE
                     )
