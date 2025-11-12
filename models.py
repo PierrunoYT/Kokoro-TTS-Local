@@ -25,6 +25,14 @@ os.environ["PYTHONIOENCODING"] = "utf-8"
 # Disable symlinks warning
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
+# Check if offline mode is enabled via environment variable
+OFFLINE_MODE = os.environ.get("HF_HUB_OFFLINE", "0") == "1" or os.environ.get("TRANSFORMERS_OFFLINE", "0") == "1"
+if OFFLINE_MODE:
+    logger.info("Running in OFFLINE mode - will only use locally cached files")
+    # Ensure the environment variable is set for the kokoro library as well
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 # Setup for safer cleanup
 import atexit
 import signal
@@ -298,6 +306,20 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
     if not files_to_download and downloaded_voices:
         logger.info(f"All required voice files already exist ({len(downloaded_voices)} files)")
         return downloaded_voices
+    
+    # In offline mode, only use existing files
+    if OFFLINE_MODE:
+        if not downloaded_voices:
+            error_msg = "No voice files found locally and running in OFFLINE mode. Please download voice files first with network connection."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        elif len(downloaded_voices) < required_count:
+            error_msg = f"Only {len(downloaded_voices)} voice files found locally, but {required_count} were required. Running in OFFLINE mode."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        else:
+            logger.info(f"Using {len(downloaded_voices)} locally cached voice files (OFFLINE mode)")
+            return downloaded_voices
 
     def download_single_voice(voice_file: str) -> tuple[str, bool, str]:
         """Download a single voice file with retry logic"""
@@ -319,7 +341,8 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
                         filename=f"voices/{voice_file}",
                         local_dir=temp_file.name + "_dir",
                         force_download=True,
-                        revision=repo_version
+                        revision=repo_version,
+                        local_files_only=OFFLINE_MODE
                     )
                     
                     # Verify file integrity with basic size check
@@ -411,6 +434,11 @@ def build_model(model_path: str, device: str, repo_version: str = "main") -> Enh
 
             model_path = os.path.abspath(model_path)
             if not os.path.exists(model_path):
+                if OFFLINE_MODE:
+                    error_msg = f"Model file {model_path} not found and running in OFFLINE mode. Please download the model first with network connection."
+                    print(error_msg)
+                    raise ValueError(error_msg)
+                
                 print(f"Downloading model file {model_path}...")
                 try:
                     from huggingface_hub import hf_hub_download
@@ -418,8 +446,9 @@ def build_model(model_path: str, device: str, repo_version: str = "main") -> Enh
                         repo_id="hexgrad/Kokoro-82M",
                         filename="kokoro-v1_0.pth",
                         local_dir=".",
-                        force_download=True,
-                        revision=repo_version
+                        force_download=False,
+                        revision=repo_version,
+                        local_files_only=OFFLINE_MODE
                     )
                     print(f"Model downloaded to {model_path}")
                 except Exception as e:
@@ -429,14 +458,21 @@ def build_model(model_path: str, device: str, repo_version: str = "main") -> Enh
             # Download config if it doesn't exist
             config_path = os.path.abspath("config.json")
             if not os.path.exists(config_path):
+                if OFFLINE_MODE:
+                    error_msg = f"Config file {config_path} not found and running in OFFLINE mode. Please download the config first with network connection."
+                    print(error_msg)
+                    raise ValueError(error_msg)
+                
                 print("Downloading config file...")
                 try:
+                    from huggingface_hub import hf_hub_download
                     config_path = hf_hub_download(
                         repo_id="hexgrad/Kokoro-82M",
                         filename="config.json",
                         local_dir=".",
-                        force_download=True,
-                        revision=repo_version
+                        force_download=False,
+                        revision=repo_version,
+                        local_files_only=OFFLINE_MODE
                     )
                     print(f"Config downloaded to {config_path}")
                 except Exception as e:

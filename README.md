@@ -7,6 +7,7 @@ A local implementation of the Kokoro Text-to-Speech model, featuring dynamic mod
 - Local text-to-speech synthesis using the Kokoro-82M model
 - Multiple voice support with easy voice selection (54 voices available across 8 languages)
 - Automatic model and voice downloading from Hugging Face
+- **Offline mode support** - Run completely offline after initial setup
 - Phoneme output support and visualization
 - Interactive CLI and web interface
 - Voice listing functionality
@@ -98,6 +99,49 @@ print(torch.cuda.is_available())  # Should print True if CUDA is available
 ```
 
 The system will automatically download required models and voice files on first run.
+
+## Offline Mode
+
+After the initial setup, you can run Kokoro-TTS-Local completely offline without an internet connection.
+
+### Quick Start - Offline Mode
+
+**Linux/macOS:**
+```bash
+export HF_HUB_OFFLINE=1
+python tts_demo.py
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:HF_HUB_OFFLINE="1"
+python tts_demo.py
+```
+
+**Windows (Command Prompt):**
+```cmd
+set HF_HUB_OFFLINE=1
+python tts_demo.py
+```
+
+### Requirements for Offline Mode
+
+Before enabling offline mode, ensure you have:
+1. Run the application at least once with internet connection
+2. Downloaded the model file (`kokoro-v1_0.pth`)
+3. Downloaded the config file (`config.json`)
+4. Downloaded at least one voice file in the `voices/` directory
+
+### Testing Offline Mode
+
+Use the provided test script to verify your offline setup:
+
+```bash
+export HF_HUB_OFFLINE=1  # Enable offline mode
+python test_offline.py   # Run the test
+```
+
+For detailed offline usage instructions, troubleshooting, and best practices, see [`OFFLINE_USAGE.md`](OFFLINE_USAGE.md).
 
 ## Usage
 
@@ -377,13 +421,18 @@ This will automatically detect and report:
 
 ### Common Issues
 
-1. **Model Download Issues**
+1. **Offline Mode / Network Connection Issues**
+   - **Problem:** Getting "Failed to resolve 'huggingface.co'" errors even with cached files
+   - **Solution:** Enable offline mode with `export HF_HUB_OFFLINE=1` (Linux/macOS) or `$env:HF_HUB_OFFLINE="1"` (Windows)
+   - **See:** [`OFFLINE_USAGE.md`](OFFLINE_USAGE.md) for complete offline setup guide
+
+2. **Model Download Issues**
    - Ensure stable internet connection
    - Check Hugging Face is accessible
    - Verify sufficient disk space
    - Try clearing the `.cache/huggingface` directory
 
-2. **CUDA/GPU Issues**
+3. **CUDA/GPU Issues**
    - Verify CUDA installation with `nvidia-smi`
    - Update GPU drivers
    - Install PyTorch with CUDA support using the appropriate command:
@@ -407,19 +456,19 @@ This will automatically detect and report:
      ```
    - Fall back to CPU if needed
 
-3. **Audio Output Issues**
+4. **Audio Output Issues**
    - Check system audio settings
    - Verify output directory permissions
    - Install FFmpeg for MP3/AAC support
    - Try different output formats
 
-4. **Voice File Issues**
+5. **Voice File Issues**
    - Delete and let system redownload voice files
    - Check `voices/` directory permissions
    - Verify voice file integrity
    - Try using a different voice
 
-5. **Web Interface Issues**
+6. **Web Interface Issues**
    - Check port 7860 availability
    - Try different browser
    - Clear browser cache
