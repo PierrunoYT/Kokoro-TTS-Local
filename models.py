@@ -214,43 +214,64 @@ def load_config(config_path: str) -> dict:
 
 # Initialize espeak-ng
 phonemizer_available = False  # Global flag to track if phonemizer is working
-try:
-    from phonemizer.backend.espeak.wrapper import EspeakWrapper
-    from phonemizer import phonemize
-    import espeakng_loader
+current_phonemizer_lang = None  # Track current phonemizer language
 
-    # Make library available first
-    library_path = espeakng_loader.get_library_path()
-    data_path = espeakng_loader.get_data_path()
-    espeakng_loader.make_library_available()
-
-    # Set up espeak-ng paths
-    EspeakWrapper.library_path = library_path
-    EspeakWrapper.data_path = data_path
-
-    # Verify espeak-ng is working
+def initialize_phonemizer(language: str = 'en-us') -> bool:
+    """Initialize phonemizer for a specific language
+    
+    Args:
+        language: Language code for phonemizer (e.g., 'en-us', 'zh')
+        
+    Returns:
+        True if initialization successful, False otherwise
+    """
+    global phonemizer_available, current_phonemizer_lang
+    
     try:
-        test_phonemes = phonemize('test', language='en-us')
-        if test_phonemes:
-            phonemizer_available = True
-            print("Phonemizer successfully initialized")
-        else:
-            print("Note: Phonemization returned empty result")
-            print("TTS will work, but phoneme visualization will be disabled")
-    except Exception as e:
-        # Continue without espeak functionality - be more specific about error types
-        if "espeak" in str(e).lower():
-            print(f"Note: eSpeak not found: {e}")
-        else:
-            print(f"Note: Phonemizer initialization error: {e}")
-        print("TTS will work, but phoneme visualization will be disabled")
+        from phonemizer.backend.espeak.wrapper import EspeakWrapper
+        from phonemizer import phonemize
+        import espeakng_loader
 
-except ImportError as e:
-    print(f"Note: Phonemizer packages not installed: {e}")
-    print("TTS will work, but phoneme visualization will be disabled")
-    # Rather than automatically installing packages, inform the user
-    print("If you want phoneme visualization, manually install required packages:")
-    print("pip install espeakng-loader phonemizer-fork")
+        # Make library available first
+        library_path = espeakng_loader.get_library_path()
+        data_path = espeakng_loader.get_data_path()
+        espeakng_loader.make_library_available()
+
+        # Set up espeak-ng paths
+        EspeakWrapper.library_path = library_path
+        EspeakWrapper.data_path = data_path
+
+        # Verify espeak-ng is working with specified language
+        try:
+            test_text = 'test' if language in ['en-us', 'en-gb'] else '测试'
+            test_phonemes = phonemize(test_text, language=language)
+            if test_phonemes:
+                phonemizer_available = True
+                current_phonemizer_lang = language
+                logger.info(f"Phonemizer successfully initialized for language: {language}")
+                return True
+            else:
+                logger.warning("Phonemization returned empty result")
+                return False
+        except Exception as e:
+            # Continue without espeak functionality - be more specific about error types
+            if "espeak" in str(e).lower():
+                logger.warning(f"eSpeak not found: {e}")
+            else:
+                logger.warning(f"Phonemizer initialization error: {e}")
+            return False
+
+    except ImportError as e:
+        logger.warning(f"Phonemizer packages not installed: {e}")
+        logger.info("If you want phoneme visualization, manually install required packages:")
+        logger.info("pip install espeakng-loader phonemizer-fork")
+        return False
+
+# Initialize default English phonemizer
+try:
+    initialize_phonemizer('en-us')
+except Exception as e:
+    logger.warning(f"Could not initialize default phonemizer: {e}")
 
 # Initialize pipeline globally with thread safety
 _pipeline = None
@@ -405,13 +426,14 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
 
     return downloaded_voices
 
-def build_model(model_path: str, device: str, repo_version: str = "main") -> EnhancedKPipeline:
+def build_model(model_path: str, device: str, repo_version: str = "main", lang_code: str = 'a') -> EnhancedKPipeline:
     """Build and return the Enhanced Kokoro pipeline with proper encoding configuration
 
     Args:
         model_path: Path to the model file or None to use default
         device: Device to use ('cuda' or 'cpu')
         repo_version: Version/tag of the repository to use (default: "main")
+        lang_code: Language code for the model (default: 'a' for American English, 'z' for Chinese)
 
     Returns:
         Initialized EnhancedKPipeline instance
@@ -420,39 +442,47 @@ def build_model(model_path: str, device: str, repo_version: str = "main") -> Enh
 
     # Use a lock for thread safety
     with _pipeline_lock:
-        # Double-check pattern to avoid race conditions
-        if _pipeline is not None:
+        # Don't reuse pipeline if language code is different
+        # (each language may need different configuration)
+        if _pipeline is not None and hasattr(_pipeline, 'lang_code') and _pipeline.lang_code == lang_code:
             return _pipeline
 
         try:
             # Patch json loading before initializing pipeline
             patch_json_load()
 
+            # Determine if this is a Chinese model
+            is_chinese_model = lang_code == 'z' or (model_path and 'zh' in str(model_path).lower())
+
             # Download model if it doesn't exist
             if model_path is None:
-                model_path = 'kokoro-v1_0.pth'
+                model_path = 'kokoro-82M-v1.1_zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
 
             model_path = os.path.abspath(model_path)
             if not os.path.exists(model_path):
                 if OFFLINE_MODE:
                     error_msg = f"Model file {model_path} not found and running in OFFLINE mode. Please download the model first with network connection."
-                    print(error_msg)
+                    logger.error(error_msg)
                     raise ValueError(error_msg)
                 
-                print(f"Downloading model file {model_path}...")
+                logger.info(f"Downloading model file {model_path}...")
                 try:
                     from huggingface_hub import hf_hub_download
+                    
+                    # Determine filename for download
+                    filename = 'kokoro-82M-v1.1_zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
+                    
                     model_path = hf_hub_download(
                         repo_id="hexgrad/Kokoro-82M",
-                        filename="kokoro-v1_0.pth",
+                        filename=filename,
                         local_dir=".",
                         force_download=False,
                         revision=repo_version,
                         local_files_only=OFFLINE_MODE
                     )
-                    print(f"Model downloaded to {model_path}")
+                    logger.info(f"Model downloaded to {model_path}")
                 except Exception as e:
-                    print(f"Error downloading model: {e}")
+                    logger.error(f"Error downloading model: {e}")
                     raise ValueError(f"Could not download model: {e}") from e
 
             # Download config if it doesn't exist
@@ -460,10 +490,10 @@ def build_model(model_path: str, device: str, repo_version: str = "main") -> Enh
             if not os.path.exists(config_path):
                 if OFFLINE_MODE:
                     error_msg = f"Config file {config_path} not found and running in OFFLINE mode. Please download the config first with network connection."
-                    print(error_msg)
+                    logger.error(error_msg)
                     raise ValueError(error_msg)
                 
-                print("Downloading config file...")
+                logger.info("Downloading config file...")
                 try:
                     from huggingface_hub import hf_hub_download
                     config_path = hf_hub_download(
@@ -474,24 +504,37 @@ def build_model(model_path: str, device: str, repo_version: str = "main") -> Enh
                         revision=repo_version,
                         local_files_only=OFFLINE_MODE
                     )
-                    print(f"Config downloaded to {config_path}")
+                    logger.info(f"Config downloaded to {config_path}")
                 except Exception as e:
-                    print(f"Error downloading config: {e}")
+                    logger.error(f"Error downloading config: {e}")
                     raise ValueError(f"Could not download config: {e}") from e
+
+            # Initialize phonemizer for the appropriate language
+            if is_chinese_model:
+                logger.info("Initializing phonemizer for Chinese...")
+                try:
+                    initialize_phonemizer('zh')
+                except Exception as e:
+                    logger.warning(f"Could not initialize Chinese phonemizer: {e}")
+            else:
+                logger.info("Initializing phonemizer for English...")
+                try:
+                    initialize_phonemizer('en-us')
+                except Exception as e:
+                    logger.warning(f"Could not initialize English phonemizer: {e}")
 
             # Download voice files - require at least one voice
             try:
                 downloaded_voices = download_voice_files(repo_version=repo_version, required_count=1)
             except ValueError as e:
-                print(f"Error: Voice files download failed: {e}")
+                logger.error(f"Error: Voice files download failed: {e}")
                 raise ValueError("Voice files download failed") from e
 
             # Validate language code
-            lang_code = 'a'  # Default to 'a' for American English
             supported_codes = list(LANGUAGE_CODES.keys())
             if lang_code not in supported_codes:
-                print(f"Warning: Unsupported language code '{lang_code}'. Using 'a' (American English).")
-                print(f"Supported language codes: {', '.join(supported_codes)}")
+                logger.warning(f"Unsupported language code '{lang_code}'. Using 'a' (American English).")
+                logger.info(f"Supported language codes: {', '.join(supported_codes)}")
                 lang_code = 'a'
 
             # Initialize pipeline with validated language code
@@ -499,7 +542,8 @@ def build_model(model_path: str, device: str, repo_version: str = "main") -> Enh
             if pipeline_instance is None:
                 raise ValueError("Failed to initialize EnhancedKPipeline - pipeline is None")
 
-            # Store device parameter for reference in other operations
+            # Store language code and device
+            pipeline_instance.lang_code = lang_code
             pipeline_instance.device = device
 
             # Try to load the first available voice with improved error handling
@@ -509,21 +553,21 @@ def build_model(model_path: str, device: str, repo_version: str = "main") -> Enh
                 if os.path.exists(voice_path):
                     try:
                         pipeline_instance.load_voice(voice_path)
-                        print(f"Successfully loaded voice: {voice_file}")
+                        logger.info(f"Successfully loaded voice: {voice_file}")
                         voice_loaded = True
                         break  # Successfully loaded a voice
                     except Exception as e:
-                        print(f"Warning: Failed to load voice {voice_file}: {e}")
+                        logger.warning(f"Warning: Failed to load voice {voice_file}: {e}")
                         continue
 
             if not voice_loaded:
-                print("Warning: Could not load any voice models")
+                logger.warning("Warning: Could not load any voice models")
 
             # Set the global _pipeline only after successful initialization
             _pipeline = pipeline_instance
 
         except Exception as e:
-            print(f"Error initializing pipeline: {e}")
+            logger.error(f"Error initializing pipeline: {e}")
             # Restore original json.load on error
             restore_json_load()
             raise

@@ -317,6 +317,8 @@ The system includes 54 different voices across 8 languages:
 - zm_yunxia: Chinese male voice (Grade D)
 - zm_yunyang: Chinese male voice (Grade D)
 
+**Note:** For Chinese TTS setup and usage, see [CHINESE_TTS_GUIDE.md](CHINESE_TTS_GUIDE.md) or [README_CHINESE_TTS.md](README_CHINESE_TTS.md).
+
 ### 🇪🇸 Spanish (3 voices)
 **Language code: 'e'**
 
@@ -380,10 +382,15 @@ The system includes 54 different voices across 8 languages:
 ├── outputs/               # Generated audio files directory
 ├── LICENSE                # Apache 2.0 License file
 ├── README.md             # Project documentation
+├── README_CHINESE_TTS.md # Chinese TTS quick reference
+├── CHINESE_TTS_GUIDE.md  # Complete Chinese TTS guide
 ├── IMPROVEMENTS.md       # Detailed improvement documentation
 ├── models.py             # Core TTS model implementation
 ├── gradio_interface.py   # Web interface implementation
-├── tts_demo.py          # CLI implementation
+├── tts_demo.py          # CLI implementation (English)
+├── chinese_tts_demo.py   # CLI implementation (Chinese)
+├── chinese_config.py     # Chinese text processing
+├── setup_chinese_tts.py  # Chinese TTS setup script
 ├── config.py            # Centralized configuration management
 ├── dependency_checker.py # Dependency validation and system checks
 ├── speed_dial.py        # Quick preset management system
