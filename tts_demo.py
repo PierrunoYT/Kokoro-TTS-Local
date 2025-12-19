@@ -302,7 +302,7 @@ def main() -> None:
 
                     # Initialize generator
                     try:
-                        generator = model(text, voice=voice_path, speed=speed, split_pattern=r'\n+')
+                        generator = model(text, voice=str(voice_path), speed=speed, split_pattern=r'\n+')
                     except (ValueError, TypeError, RuntimeError) as e:
                         print(f"Error initializing speech generator: {e}")
                         watchdog.cancel()
