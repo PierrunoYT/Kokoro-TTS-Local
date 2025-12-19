@@ -354,27 +354,34 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
                     delay = retry_delay * (2 ** (attempt - 1))
                     time.sleep(delay)
                 
-                # Download to a temporary location first
+                # Download directly to voices directory
                 import tempfile
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.pt') as temp_file:
-                    temp_path = hf_hub_download(
+                temp_dir = tempfile.mkdtemp()
+                try:
+                    downloaded_path = hf_hub_download(
                         repo_id="hexgrad/Kokoro-82M",
                         filename=f"voices/{voice_file}",
-                        local_dir=temp_file.name + "_dir",
+                        local_dir=temp_dir,
                         force_download=False,
                         revision=repo_version,
                         local_files_only=OFFLINE_MODE
                     )
                     
                     # Verify file integrity with basic size check
-                    if Path(temp_path).stat().st_size == 0:
+                    if Path(downloaded_path).stat().st_size == 0:
                         raise ValueError(f"Downloaded file {voice_file} has zero size")
                     
                     # Move to final location
                     voice_path = voices_dir / voice_file
-                    shutil.move(temp_path, str(voice_path))
+                    shutil.move(downloaded_path, str(voice_path))
                     
                     return voice_file, True, f"Successfully downloaded {voice_file}"
+                finally:
+                    # Clean up temporary directory
+                    try:
+                        shutil.rmtree(temp_dir)
+                    except:
+                        pass
                     
             except Exception as e:
                 error_msg = f"Failed to download {voice_file} (attempt {attempt+1}/{retry_count}): {e}"

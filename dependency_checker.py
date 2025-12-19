@@ -176,7 +176,7 @@ class DependencyChecker:
         
         return commands
     
-    def check_cuda_availability(self) -> Dict[str, any]:
+    def check_cuda_availability(self) -> Dict[str, Any]:
         """Check CUDA availability and provide information"""
         cuda_info = {
             'available': False,

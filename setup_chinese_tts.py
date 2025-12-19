@@ -78,7 +78,7 @@ def check_dependencies() -> bool:
     return True
 
 
-def download_file(repo_id: str, filename: str, local_dir: str = ".") -> bool:
+    def download_file(repo_id: str, filename: str, local_dir: str = ".") -> bool:
     """Download a file from Hugging Face Hub
     
     Args:
@@ -91,7 +91,6 @@ def download_file(repo_id: str, filename: str, local_dir: str = ".") -> bool:
     """
     try:
         from huggingface_hub import hf_hub_download
-        import shutil
         
         print(f"下载 (Downloading): {filename}...")
         

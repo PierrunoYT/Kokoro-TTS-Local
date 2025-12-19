@@ -327,7 +327,7 @@ def create_interface(server_name="127.0.0.1", server_port=7860):
                 )
 
             with gr.Column(scale=1):
-            # Speed dial section
+                # Speed dial section
                 preset_dropdown = gr.Dropdown(
                     choices=preset_names,
                     value=preset_names[0] if preset_names else None,
