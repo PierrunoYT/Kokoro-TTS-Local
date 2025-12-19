@@ -149,6 +149,7 @@ def list_chinese_voices():
     
     print("\n男性声音 (Male Voices):")
     for i, voice in enumerate(male_voices, 1):
+        info = get_chinese_voice_info(voice)
         print(f"  {i+len(female_voices)}. {voice} - {info['name']} ({info['description']})")
     
     print("-"*60 + "\n")
@@ -202,14 +203,18 @@ def select_sample_text() -> Optional[str]:
     """Select from predefined sample texts"""
     print("\n选择样本文本 (Select sample text):")
     for key, sample in SAMPLE_CHINESE_TEXTS.items():
+        print(f"{key}. {sample['title']}")
         if sample["text"]:
-            print(f"{key}. {sample['title']}")
             print(f"   {sample['text'][:50]}...")
     
     choice = input("\n请选择 (Select): ").strip()
     
-    if choice in SAMPLE_CHINESE_TEXTS and SAMPLE_CHINESE_TEXTS[choice]["text"]:
-        return SAMPLE_CHINESE_TEXTS[choice]["text"]
+    if choice in SAMPLE_CHINESE_TEXTS:
+        if SAMPLE_CHINESE_TEXTS[choice]["text"]:
+            return SAMPLE_CHINESE_TEXTS[choice]["text"]
+        else:
+            # Custom input option
+            return get_chinese_text_input()
     
     return None
 

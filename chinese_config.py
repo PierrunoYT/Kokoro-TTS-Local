@@ -110,8 +110,10 @@ class ChineseTextProcessor:
         
         # Ensure proper spacing around punctuation
         import re
-        # Add space before Chinese punctuation if needed
-        text = re.sub(r'([。，！？；：""''（）【】《》])', r'\1 ', text)
+        # Add space after Chinese punctuation, removing any existing spaces first
+        text = re.sub(r'\s*([。，！？；：""''（）【】《》])\s*', r'\1 ', text)
+        # Clean up any double spaces that may have been created
+        text = ' '.join(text.split())
         
         return text.strip()
     

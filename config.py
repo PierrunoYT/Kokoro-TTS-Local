@@ -186,11 +186,18 @@ class TTSConfig:
         raise ValueError(f"Path key '{path_key}' not found in configuration")
     
     def validate_sample_rate(self, rate: int) -> int:
-        """Validate sample rate is within acceptable range"""
+        """Validate and normalize sample rate to acceptable values
+        
+        Returns the rate if valid, otherwise returns the default sample rate.
+        """
         valid_rates = [16000, 22050, 24000, 44100, 48000]
         if rate not in valid_rates:
-            logger.warning(f"Unusual sample rate {rate}. Valid rates are {valid_rates}")
-            return self.get("audio.sample_rate", 24000)
+            default_rate = self.get("audio.sample_rate", 24000)
+            logger.warning(
+                f"Invalid sample rate {rate}. Valid rates are {valid_rates}. "
+                f"Using default rate: {default_rate}"
+            )
+            return default_rate
         return rate
     
     def validate_language(self, lang: str) -> str:
