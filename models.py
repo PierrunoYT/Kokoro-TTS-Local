@@ -342,7 +342,7 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
             logger.info(f"Using {len(downloaded_voices)} locally cached voice files (OFFLINE mode)")
             return downloaded_voices
 
-    def download_single_voice(voice_file: str) -> tuple[str, bool, str]:
+    def download_single_voice(voice_file: str) -> Tuple[str, bool, str]:
         """Download a single voice file with retry logic"""
         retry_count = 3
         retry_delay = 2
