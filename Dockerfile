@@ -19,7 +19,9 @@ RUN apt-get update \
 COPY requirements.txt ./
 
 RUN pip install --upgrade pip setuptools wheel \
-    && pip install -r requirements.txt
+    && pip install -r requirements.txt \
+    && python -m spacy download en_core_web_sm \
+    && python -c "import spacy; spacy.load('en_core_web_sm'); print('spaCy model OK')"
 
 COPY . .
 
