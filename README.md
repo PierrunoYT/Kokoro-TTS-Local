@@ -141,7 +141,15 @@ export HF_HUB_OFFLINE=1  # Enable offline mode
 python test_offline.py   # Run the test
 ```
 
-For detailed offline usage instructions, troubleshooting, and best practices, see [`OFFLINE_USAGE.md`](OFFLINE_USAGE.md).
+The script checks:
+- Offline mode environment variables are set
+- Required files exist (`kokoro-v1_0.pth`, `config.json`, `voices/`)
+- All required Python packages are installed
+- Model initializes correctly
+- Voices can be listed
+- Speech can be generated and saved
+
+For detailed offline usage instructions, set `HF_HUB_OFFLINE=1` before running and use `test_offline.py` to verify your setup.
 
 ## Usage
 
@@ -182,7 +190,7 @@ Enter the text you want to convert to speech
 (or press Enter for default text)
 > Hello, world!
 
-Enter speech speed (0.5-2.0, default 1.0): 1.2
+Enter speech speed (0.1-3.0, default 1.0): 1.2
 
 Generating speech for: 'Hello, world!'
 Using voice: af_bella
@@ -203,10 +211,12 @@ Then open your browser to the URL shown in the console (typically http://localho
 The web interface provides:
 - Easy voice selection from a dropdown menu
 - Text input field with examples
+- Speed control slider (0.5–2.0x)
+- Output format selection (WAV, MP3, AAC)
 - Real-time generation progress
 - Audio playback in the browser
-- Multiple output format options (WAV, MP3, AAC)
 - Download options for generated audio
+- **Speed Dial presets** — save, load, and delete frequently used voice/text/speed combinations
 
 ### Dependency Validation
 
@@ -317,7 +327,7 @@ The system includes 54 different voices across 8 languages:
 - zm_yunxia: Chinese male voice (Grade D)
 - zm_yunyang: Chinese male voice (Grade D)
 
-**Note:** For Chinese TTS setup and usage, see [CHINESE_TTS_GUIDE.md](CHINESE_TTS_GUIDE.md) or [README_CHINESE_TTS.md](README_CHINESE_TTS.md).
+**Note:** Run `python setup_chinese_tts.py` to download the Chinese model and voice files automatically. For full usage details see [CHINESE_TTS_GUIDE.md](CHINESE_TTS_GUIDE.md) or [README_CHINESE_TTS.md](README_CHINESE_TTS.md).
 
 ### 🇪🇸 Spanish (3 voices)
 **Language code: 'e'**
@@ -388,13 +398,13 @@ The system includes 54 different voices across 8 languages:
 ├── models.py             # Core TTS model implementation
 ├── gradio_interface.py   # Web interface implementation
 ├── tts_demo.py          # CLI implementation (English)
-├── chinese_tts_demo.py   # CLI implementation (Chinese)
-├── chinese_config.py     # Chinese text processing
-├── setup_chinese_tts.py  # Chinese TTS setup script
+├── chinese_tts_demo.py   # CLI implementation (Chinese, 5-option menu)
+├── chinese_config.py     # Chinese text processing and voice configuration
+├── setup_chinese_tts.py  # Downloads Chinese model and voice files
 ├── config.py            # Centralized configuration management
 ├── dependency_checker.py # Dependency validation and system checks
-├── speed_dial.py        # Quick preset management system
-├── config.json          # Model configuration file
+├── speed_dial.py        # Speed Dial preset management (save/load/delete)
+├── test_offline.py      # Offline mode verification script
 └── requirements.txt     # Python dependencies (no version constraints)
 ```
 
@@ -431,7 +441,7 @@ This will automatically detect and report:
 1. **Offline Mode / Network Connection Issues**
    - **Problem:** Getting "Failed to resolve 'huggingface.co'" errors even with cached files
    - **Solution:** Enable offline mode with `export HF_HUB_OFFLINE=1` (Linux/macOS) or `$env:HF_HUB_OFFLINE="1"` (Windows)
-   - **See:** [`OFFLINE_USAGE.md`](OFFLINE_USAGE.md) for complete offline setup guide
+   - **Verify:** Run `python test_offline.py` to confirm your offline setup is working
 
 2. **Model Download Issues**
    - Ensure stable internet connection
