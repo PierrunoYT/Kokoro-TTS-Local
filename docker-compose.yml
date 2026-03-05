@@ -1,0 +1,15 @@
+services:
+  kokoro-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kokoro-tts-local
+    ports:
+      - "7860:7860"
+    environment:
+      - HF_HUB_OFFLINE=0
+    volumes:
+      - ./outputs:/app/outputs
+      - ./voices:/app/voices
+      - ./.cache:/app/.cache
+    restart: unless-stopped
