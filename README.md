@@ -106,6 +106,7 @@ This project can be run in a CPU-first Docker setup with runtime model and voice
 
 ### Build and Run with Docker
 
+**Linux/macOS (bash/zsh):**
 ```bash
 docker build -t kokoro-tts-local:cpu .
 docker run --rm -it \
@@ -113,6 +114,17 @@ docker run --rm -it \
    -v "$(pwd)/outputs:/app/outputs" \
    -v "$(pwd)/voices:/app/voices" \
    -v "$(pwd)/.cache:/app/.cache" \
+   kokoro-tts-local:cpu
+```
+
+**Windows (PowerShell):**
+```powershell
+docker build -t kokoro-tts-local:cpu .
+docker run --rm -it `
+   -p 7860:7860 `
+   -v "${PWD}/outputs:/app/outputs" `
+   -v "${PWD}/voices:/app/voices" `
+   -v "${PWD}/.cache:/app/.cache" `
    kokoro-tts-local:cpu
 ```
 
