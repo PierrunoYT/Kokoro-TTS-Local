@@ -100,6 +100,50 @@ print(torch.cuda.is_available())  # Should print True if CUDA is available
 
 The system will automatically download required models and voice files on first run.
 
+## Docker Quick Start
+
+This project can be run in a CPU-first Docker setup with runtime model and voice downloads.
+
+### Build and Run with Docker
+
+**Linux/macOS (bash/zsh):**
+```bash
+docker build -t kokoro-tts-local:cpu .
+docker run --rm -it \
+   -p 7860:7860 \
+   -v "$(pwd)/outputs:/app/outputs" \
+   -v "$(pwd)/voices:/app/voices" \
+   -v "$(pwd)/.cache:/app/.cache" \
+   kokoro-tts-local:cpu
+```
+
+**Windows (PowerShell):**
+```powershell
+docker build -t kokoro-tts-local:cpu .
+docker run --rm -it `
+   -p 7860:7860 `
+   -v "${PWD}/outputs:/app/outputs" `
+   -v "${PWD}/voices:/app/voices" `
+   -v "${PWD}/.cache:/app/.cache" `
+   kokoro-tts-local:cpu
+```
+
+Open `http://localhost:7860` in your browser.
+
+### Run with Docker Compose
+
+```bash
+docker compose up --build
+```
+
+### Docker Notes
+
+- First startup can take longer because model and voice files are downloaded from Hugging Face.
+- Volumes for `outputs`, `voices`, and `.cache` are recommended so downloads and generated audio persist across restarts.
+- The Docker image pre-installs `en_core_web_sm` during build to avoid non-root runtime initialization errors.
+- This initial Docker support is CPU-first. GPU and pre-baked model image variants are intentionally out of scope for this first implementation.
+- To force offline mode after assets are downloaded, set `HF_HUB_OFFLINE=1` in your Docker environment.
+
 ## Offline Mode
 
 After the initial setup, you can run Kokoro-TTS-Local completely offline without an internet connection.

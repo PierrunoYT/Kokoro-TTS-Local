@@ -1,0 +1,16 @@
+services:
+  kokoro-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kokoro-tts-local
+    ports:
+      - "7860:7860"
+    environment:
+      # Uncomment the line below to run fully offline after initial model download
+      # - HF_HUB_OFFLINE=1
+    volumes:
+      - ./outputs:/app/outputs
+      - ./voices:/app/voices
+      - ./.cache:/app/.cache
+    restart: unless-stopped

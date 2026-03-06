@@ -1,0 +1,26 @@
+# Git and local metadata
+.git
+.github
+.gitignore
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+*.so
+venv/
+.venv/
+
+# Runtime/generated artifacts
+outputs/
+.cache/
+.gradio/
+*.log
+
+# Local model artifacts (download at runtime in container)
+voices/
+*.pth
+
+# Editor/OS files
+.vscode/
+.idea/
+.DS_Store
