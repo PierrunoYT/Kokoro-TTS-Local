@@ -153,7 +153,7 @@ class ChineseTTSConfig:
     
     def __init__(self, config_file: Optional[str] = None):
         self.config_file = Path(config_file or "chinese_tts_config.json").resolve()
-        self.chinese_voices_dir = Path("voices_chinese").resolve()
+        self.chinese_voices_dir = Path("voices").resolve()
         self._config = self._load_default_config()
         self._load_config_file()
     
@@ -181,7 +181,7 @@ class ChineseTTSConfig:
                 "max_speed": 2.0
             },
             "paths": {
-                "voices_dir": "voices_chinese",
+                "voices_dir": "voices",
                 "models_dir": ".",
                 "output_dir": "outputs"
             }
@@ -283,7 +283,12 @@ def get_chinese_config(key: str, default: Any = None) -> Any:
 
 def get_chinese_voices() -> List[str]:
     """Get list of available Chinese voices"""
-    return list(CHINESE_VOICES.keys())
+    voices_dir = chinese_config.chinese_voices_dir
+    if not voices_dir.exists():
+        return []
+
+    available_voice_names = {voice_path.stem for voice_path in voices_dir.glob("*.pt")}
+    return [voice_name for voice_name in CHINESE_VOICES if voice_name in available_voice_names]
 
 
 def get_chinese_voice_info(voice_name: str) -> Optional[Dict[str, Any]]:

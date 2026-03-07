@@ -245,7 +245,7 @@ def load_chinese_model(model_path: str, device: str) -> EnhancedKPipeline:
         
         # We'll use language code 'z' for Chinese (Mandarin)
         # Create a custom pipeline for Chinese
-        pipeline = build_model(model_path, device, repo_version="main")
+        pipeline = build_model(model_path, device, repo_version="main", lang_code='z')
         
         logger.info("中文模型加载成功 (Chinese model loaded successfully)")
         return pipeline

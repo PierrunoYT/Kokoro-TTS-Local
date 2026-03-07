@@ -159,40 +159,60 @@ LANGUAGE_CODES = {
     'p': 'Brazilian Portuguese'
 }
 
+VOICE_PREFIX_TO_LANGUAGE_CODE = {
+    'af': 'a', 'am': 'a',
+    'bf': 'b', 'bm': 'b',
+    'jf': 'j', 'jm': 'j',
+    'zf': 'z', 'zm': 'z',
+    'ef': 'e', 'em': 'e',
+    'ff': 'f', 'fm': 'f',
+    'hf': 'h', 'hm': 'h',
+    'if': 'i', 'im': 'i',
+    'pf': 'p', 'pm': 'p',
+}
+
 
 def patch_json_load() -> None:
     """Patch json.load to handle UTF-8 encoded files with special characters"""
     global _patches_applied, _original_json_load
-    original_load = json.load
-    _original_json_load = original_load  # Store for restoration
+    if _patches_applied['json_load']:
+        return
+
+    _original_json_load = json.load  # Store for restoration
+
+    def read_json_content(fp, encoding: str) -> str:
+        if hasattr(fp, 'seek'):
+            fp.seek(0)
+
+        if hasattr(fp, 'buffer'):
+            raw_content = fp.buffer.read()
+            return raw_content.decode(
+                encoding,
+                errors='replace' if encoding == 'utf-8-sig' else 'strict'
+            ).lstrip('\ufeff')
+
+        content = fp.read()
+        if isinstance(content, bytes):
+            return content.decode(
+                encoding,
+                errors='replace' if encoding == 'utf-8-sig' else 'strict'
+            ).lstrip('\ufeff')
+        return content.lstrip('\ufeff')
 
     def custom_load(fp, *args, **kwargs):
         try:
-            # Try reading with UTF-8 encoding
-            if hasattr(fp, 'buffer'):
-                content = fp.buffer.read().decode('utf-8')
-            else:
-                content = fp.read()
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parsing error: {e}")
-                raise
+            content = read_json_content(fp, 'utf-8')
         except UnicodeDecodeError:
-            # If UTF-8 fails, try with utf-8-sig for files with BOM
-            fp.seek(0)
-            content = fp.read()
-            if isinstance(content, bytes):
-                content = content.decode('utf-8-sig', errors='replace')
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parsing error: {e}")
-                raise
+            content = read_json_content(fp, 'utf-8-sig')
+
+        try:
+            return json.loads(content, *args, **kwargs)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {e}")
+            raise
 
     json.load = custom_load
     _patches_applied['json_load'] = True
-    return original_load  # Return original for restoration
 
 # Store the original load function for potential restoration
 _original_json_load = None
@@ -438,7 +458,12 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
 
     return downloaded_voices
 
-def build_model(model_path: str, device: str, repo_version: str = "main", lang_code: str = 'a') -> EnhancedKPipeline:
+def build_model(
+    model_path: Optional[str],
+    device: str,
+    repo_version: str = "main",
+    lang_code: str = 'a'
+) -> EnhancedKPipeline:
     """Build and return the Enhanced Kokoro pipeline with proper encoding configuration
 
     Args:
@@ -457,12 +482,10 @@ def build_model(model_path: str, device: str, repo_version: str = "main", lang_c
         # Don't reuse pipeline if language code is different
         # (each language may need different configuration)
         if _pipeline is not None and hasattr(_pipeline, 'lang_code') and _pipeline.lang_code == lang_code:
+            _pipeline.device = device
             return _pipeline
 
         try:
-            # Patch json loading before initializing pipeline
-            patch_json_load()
-
             # Determine if this is a Chinese model
             is_chinese_model = lang_code == 'z' or (model_path and 'zh' in str(model_path).lower())
 
@@ -550,7 +573,15 @@ def build_model(model_path: str, device: str, repo_version: str = "main", lang_c
                 lang_code = 'a'
 
             # Initialize pipeline with validated language code
-            pipeline_instance = EnhancedKPipeline(lang_code=lang_code)
+            patch_applied_here = not _patches_applied['json_load']
+            if patch_applied_here:
+                patch_json_load()
+            try:
+                pipeline_instance = EnhancedKPipeline(lang_code=lang_code)
+            finally:
+                if patch_applied_here:
+                    restore_json_load()
+
             if pipeline_instance is None:
                 raise ValueError("Failed to initialize EnhancedKPipeline - pipeline is None")
 
@@ -560,7 +591,19 @@ def build_model(model_path: str, device: str, repo_version: str = "main", lang_c
 
             # Try to load the first available voice with improved error handling
             voice_loaded = False
-            for voice_file in downloaded_voices:
+            matching_voice_files = [
+                voice_file
+                for voice_file in downloaded_voices
+                if get_language_code_from_voice(Path(voice_file).stem) == lang_code
+            ]
+
+            if not matching_voice_files:
+                logger.warning(
+                    "No voice files matched language code '%s'; falling back to any downloaded voice",
+                    lang_code
+                )
+
+            for voice_file in matching_voice_files or downloaded_voices:
                 voice_path = os.path.abspath(os.path.join("voices", voice_file))
                 if os.path.exists(voice_path):
                     try:
@@ -580,8 +623,6 @@ def build_model(model_path: str, device: str, repo_version: str = "main", lang_c
 
         except Exception as e:
             logger.error(f"Error initializing pipeline: {e}")
-            # Restore original json.load on error
-            restore_json_load()
             raise
 
         return _pipeline
@@ -643,23 +684,8 @@ def get_language_code_from_voice(voice_name: str) -> str:
     Returns:
         Language code for the voice
     """
-    # Extract prefix from voice name
-    prefix = voice_name[:2] if len(voice_name) >= 2 else 'af'
-
-    # Map voice prefixes to language codes
-    prefix_to_lang = {
-        'af': 'a', 'am': 'a',  # American English
-        'bf': 'b', 'bm': 'b',  # British English
-        'jf': 'j', 'jm': 'j',  # Japanese
-        'zf': 'z', 'zm': 'z',  # Mandarin Chinese
-        'ef': 'e', 'em': 'e',  # Spanish
-        'ff': 'f', 'fm': 'f',  # French
-        'hf': 'h', 'hm': 'h',  # Hindi
-        'if': 'i', 'im': 'i',  # Italian
-        'pf': 'p', 'pm': 'p',  # Brazilian Portuguese
-    }
-
-    return prefix_to_lang.get(prefix, 'a')  # Default to American English
+    prefix = voice_name[:2].lower() if len(voice_name) >= 2 else 'af'
+    return VOICE_PREFIX_TO_LANGUAGE_CODE.get(prefix, 'a')  # Default to American English
 
 def load_voice(voice_name: str, device: str) -> torch.Tensor:
     """Load a voice model in a thread-safe manner
@@ -674,10 +700,9 @@ def load_voice(voice_name: str, device: str) -> torch.Tensor:
     Raises:
         ValueError: If voice file not found or loading fails
     """
-    pipeline = build_model(None, device)
-
     # Format voice path correctly - strip .pt if it was included
     voice_name = voice_name.replace('.pt', '')
+    pipeline = build_model(None, device, lang_code=get_language_code_from_voice(voice_name))
     voice_path = Path("voices").resolve() / f"{voice_name}.pt"
 
     if not voice_path.exists():

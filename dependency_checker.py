@@ -7,7 +7,7 @@ This module checks if all required dependencies are installed and compatible.
 import sys
 import importlib
 import subprocess
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 from packaging import version
 import logging
 

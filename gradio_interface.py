@@ -107,7 +107,8 @@ def get_pipeline_for_voice(voice_name: str) -> EnhancedKPipeline:
     lang_code = LANG_MAP.get(prefix, "a")
     if lang_code not in pipelines:
         print(f"[INFO] Creating pipeline for lang_code='{lang_code}'")
-        pipelines[lang_code] = EnhancedKPipeline(lang_code=lang_code, model=True)
+        pipelines[lang_code] = build_model(None, device, lang_code=lang_code)
+    pipelines[lang_code].device = device
     return pipelines[lang_code]
 
 def convert_audio(input_path: PathLike, output_path: PathLike, format: str) -> Optional[PathLike]:
@@ -229,9 +230,9 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
         try:
             if voice_name.startswith(tuple(LANG_MAP.keys())):
                 pipeline = get_pipeline_for_voice(voice_name)
-                generator = pipeline(text, voice=voice_path, speed=speed, split_pattern=r'\n+')
+                generator = pipeline(text, voice=str(voice_path), speed=speed, split_pattern=r'\n+')
             else:
-                generator = model(text, voice=voice_path, speed=speed, split_pattern=r'\n+')
+                generator = model(text, voice=str(voice_path), speed=speed, split_pattern=r'\n+')
 
             all_audio = []
             max_segments = 100  # Safety limit for very long texts

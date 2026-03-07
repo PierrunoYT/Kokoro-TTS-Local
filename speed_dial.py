@@ -32,10 +32,20 @@ def load_presets() -> Dict[str, Dict[str, Any]]:
     try:
         with open(SPEED_DIAL_FILE, 'r', encoding='utf-8') as f:
             presets = json.load(f)
+
+        if not isinstance(presets, dict):
+            print(
+                "Error loading speed dial presets: "
+                f"expected a JSON object, got {type(presets).__name__}"
+            )
+            return {}
         
         # Validate the loaded presets
         validated_presets = {}
         for name, preset in presets.items():
+            if not isinstance(name, str) or not isinstance(preset, dict):
+                print(f"Skipping invalid preset entry: {name!r}")
+                continue
             if validate_preset(preset):
                 validated_presets[name] = preset
         
