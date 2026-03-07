@@ -271,7 +271,9 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
 
         # Save audio file
         try:
-            sf.write(wav_path, final_audio.numpy(), SAMPLE_RATE)
+            if isinstance(final_audio, torch.Tensor):
+                final_audio = final_audio.detach().cpu().numpy()
+            sf.write(wav_path, final_audio, SAMPLE_RATE)
         except Exception as e:
             raise Exception(f"Failed to save audio file: {e}")
 

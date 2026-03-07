@@ -311,7 +311,7 @@ def generate_chinese_speech(
                 if audio is not None:
                     # Convert to numpy if needed
                     if isinstance(audio, torch.Tensor):
-                        audio = audio.numpy()
+                        audio = audio.detach().cpu().numpy()
                     audio_segments.append(audio)
                     all_phonemes.append(ps)
                     logger.info(f"生成了句段: {gs} (Generated segment: {gs})")

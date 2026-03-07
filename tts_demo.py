@@ -377,7 +377,9 @@ def main() -> None:
 
                         # Use consistent Path object
                         output_path = DEFAULT_OUTPUT_FILE
-                        if save_audio_with_retry(final_audio.numpy(), SAMPLE_RATE, output_path):
+                        if isinstance(final_audio, torch.Tensor):
+                            final_audio = final_audio.detach().cpu().numpy()
+                        if save_audio_with_retry(final_audio, SAMPLE_RATE, output_path):
                             print(f"\nAudio saved to {output_path}")
                             # Play a system beep to indicate completion
                             try:

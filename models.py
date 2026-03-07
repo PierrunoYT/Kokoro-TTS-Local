@@ -90,17 +90,22 @@ def _cleanup_patches() -> None:
 # Register cleanup for normal exit
 atexit.register(_cleanup_patches)
 
-# Register cleanup for signals
-for sig in [signal.SIGINT, signal.SIGTERM]:
-    try:
-        signal.signal(sig, lambda signum, frame: (
-            logger.info(f"Received signal {signum}, cleaning up..."),
-            _cleanup_patches(),
-            sys.exit(1)
-        ))
-    except (ValueError, AttributeError) as e:
-        # Some signals might not be available on all platforms
-        logger.warning(f"Could not register signal handler: {e}")
+def register_cleanup_signal_handlers() -> None:
+    """Install process signal handlers for patch cleanup.
+
+    This is opt-in to avoid import-time global signal side effects when models.py
+    is imported by other applications.
+    """
+    for sig in [signal.SIGINT, signal.SIGTERM]:
+        try:
+            signal.signal(sig, lambda signum, frame: (
+                logger.info(f"Received signal {signum}, cleaning up..."),
+                _cleanup_patches(),
+                sys.exit(1)
+            ))
+        except (ValueError, AttributeError) as e:
+            # Some signals might not be available on all platforms
+            logger.warning(f"Could not register signal handler: {e}")
 
 # List of available voice files (54 voices across 8 languages)
 VOICE_FILES = [
