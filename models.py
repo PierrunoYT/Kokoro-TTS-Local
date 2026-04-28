@@ -491,7 +491,7 @@ def build_model(
 
             # Download model if it doesn't exist
             if model_path is None:
-                model_path = 'kokoro-82M-v1.1_zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
+                model_path = 'kokoro-v1_1-zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
 
             model_path = os.path.abspath(model_path)
             if not os.path.exists(model_path):
@@ -504,11 +504,12 @@ def build_model(
                 try:
                     from huggingface_hub import hf_hub_download
                     
-                    # Determine filename for download
-                    filename = 'kokoro-82M-v1.1_zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
-                    
+                    # Determine filename and repo for download
+                    filename = 'kokoro-v1_1-zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
+                    model_repo_id = "hexgrad/Kokoro-82M-v1.1-zh" if is_chinese_model else "hexgrad/Kokoro-82M"
+
                     model_path = hf_hub_download(
-                        repo_id="hexgrad/Kokoro-82M",
+                        repo_id=model_repo_id,
                         filename=filename,
                         local_dir=".",
                         force_download=False,

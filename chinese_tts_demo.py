@@ -2,14 +2,14 @@
 Chinese TTS Demo - Interactive CLI for Kokoro Chinese TTS Model
 ================================================================
 
-This script provides an interactive command-line interface for the Kokoro-82M-v1.1_zh
+This script provides an interactive command-line interface for the Kokoro-v1.1-zh
 Chinese TTS model. It handles Chinese-specific text processing and voice selection.
 
 Usage:
     python chinese_tts_demo.py
 
 Requirements:
-    - Kokoro-82M-v1.1_zh.pth model file
+    - kokoro-v1_1-zh.pth model file
     - Chinese voice files in voices/ directory
     - All dependencies from requirements.txt
 """
@@ -43,7 +43,7 @@ from chinese_config import (
 from config import TTSConfig
 
 # Constants
-DEFAULT_CHINESE_MODEL = "kokoro-82M-v1.1_zh.pth"
+DEFAULT_CHINESE_MODEL = "kokoro-v1_1-zh.pth"
 DEFAULT_CHINESE_OUTPUT = "output_chinese.wav"
 SAMPLE_RATE = 24000
 MIN_SPEED = 0.5

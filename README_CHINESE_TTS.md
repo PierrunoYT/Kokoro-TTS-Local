@@ -20,7 +20,7 @@ import torch
 
 # Load model
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = load_chinese_model('kokoro-82M-v1.1_zh.pth', device)
+model = load_chinese_model('kokoro-v1_1-zh.pth', device)
 
 # Generate speech
 audio, _ = generate_chinese_speech(

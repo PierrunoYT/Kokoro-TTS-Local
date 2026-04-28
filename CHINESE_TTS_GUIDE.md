@@ -50,8 +50,8 @@ This script automatically downloads the model and all voice files.
 1. **Download the model:**
    ```bash
    # From Hugging Face
-   git clone https://huggingface.co/hexgrad/Kokoro-82M
-   # Place kokoro-82M-v1.1_zh.pth in project root
+   git clone https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh
+   # Place kokoro-v1_1-zh.pth in project root
    ```
 
 2. **Download voice files** to `voices/` directory:
@@ -88,7 +88,7 @@ import torch
 
 # Load model
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = load_chinese_model('kokoro-82M-v1.1_zh.pth', device)
+model = load_chinese_model('kokoro-v1_1-zh.pth', device)
 
 # Generate speech
 text = "你好，世界！这是一个测试。"
@@ -141,7 +141,7 @@ if audio is not None:
 
 **Solution**: Run `python setup_chinese_tts.py` or download manually:
 ```bash
-python -c "from huggingface_hub import hf_hub_download; hf_hub_download('hexgrad/Kokoro-82M', 'kokoro-82M-v1.1_zh.pth', local_dir='.')"
+python -c "from huggingface_hub import hf_hub_download; hf_hub_download('hexgrad/Kokoro-82M-v1.1-zh', 'kokoro-v1_1-zh.pth', local_dir='.')"
 ```
 
 ### "Voice file not found"
@@ -242,7 +242,7 @@ A: Not yet, but you can modify `gradio_interface.py` to support Chinese.
 ## Additional Resources
 
 - **Kokoro Project**: https://github.com/hexgrad/kokoro
-- **Model Repository**: https://huggingface.co/hexgrad/Kokoro-82M
+- **Model Repository**: https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh
 - **Main README**: See [README.md](README.md) for general project information
 
 ---

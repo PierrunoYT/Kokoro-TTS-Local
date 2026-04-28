@@ -1,6 +1,6 @@
 """
-Chinese TTS Configuration Module for Kokoro-82M-v1.1_zh
-========================================================
+Chinese TTS Configuration Module for Kokoro-v1.1-zh
+====================================================
 
 This module provides specialized configuration and utilities for the Kokoro Chinese TTS model.
 It handles Chinese-specific phonemization, text processing, and voice management.
@@ -19,9 +19,9 @@ CHINESE_LANG_CODE = 'z'
 
 # Chinese Model Configuration
 CHINESE_MODEL_CONFIG = {
-    "model_name": "Kokoro-82M-v1.1_zh",
-    "model_file": "kokoro-82M-v1.1_zh.pth",
-    "repo_id": "hexgrad/Kokoro-82M",
+    "model_name": "Kokoro-v1.1-zh",
+    "model_file": "kokoro-v1_1-zh.pth",
+    "repo_id": "hexgrad/Kokoro-82M-v1.1-zh",
     "language_code": 'z',
     "description": "Kokoro 82M Chinese (Mandarin) TTS Model v1.1",
     "phonemizer": "espeak-zh",  # Specialized Chinese phonemizer

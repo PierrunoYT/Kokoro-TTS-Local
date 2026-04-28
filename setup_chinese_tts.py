@@ -2,7 +2,7 @@
 Setup Script for Kokoro Chinese TTS
 ===================================
 
-This script downloads and sets up the Kokoro-82M-v1.1_zh Chinese TTS model
+This script downloads and sets up the Kokoro-v1.1-zh Chinese TTS model
 and all required voice files.
 
 Usage:
@@ -23,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-CHINESE_MODEL_FILE = "kokoro-82M-v1.1_zh.pth"
+CHINESE_MODEL_FILE = "kokoro-v1_1-zh.pth"
 CONFIG_FILE = "config.json"
 VOICES_DIR = Path("voices").resolve()
 
@@ -126,7 +126,7 @@ def download_model() -> bool:
     
     # Download
     success = download_file(
-        "hexgrad/Kokoro-82M",
+        "hexgrad/Kokoro-82M-v1.1-zh",
         CHINESE_MODEL_FILE,
         local_dir="."
     )
