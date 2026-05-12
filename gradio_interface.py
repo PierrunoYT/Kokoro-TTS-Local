@@ -33,7 +33,8 @@ import argparse
 from typing import Union, List, Optional, Tuple, Dict, Any
 from models import (
     list_available_voices, build_model,
-    generate_speech, download_voice_files, EnhancedKPipeline
+    generate_speech, download_voice_files, EnhancedKPipeline,
+    get_safe_voice_path
 )
 import speed_dial
 
@@ -71,7 +72,7 @@ LANG_MAP = {
     "jf_": "j", "jm_": "j",
     "zf_": "z", "zm_": "z",
     "ef_": "e", "em_": "e",
-    "ff_": "f",
+    "ff_": "f", "fm_": "f",
     "hf_": "h", "hm_": "h",
     "if_": "i", "im_": "i",
     "pf_": "p", "pm_": "p",
@@ -183,7 +184,7 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
         # Check available memory before processing
         memory = psutil.virtual_memory()
         available_gb = memory.available / (1024**3)
-        
+
         if available_gb < 1.0:  # Less than 1GB available
             print(f"Warning: Low memory available ({available_gb:.1f}GB). Consider closing other applications.")
             # Force garbage collection
@@ -208,7 +209,7 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
         if available_gb < 2.0:  # Less than 2GB available
             MAX_CHARS = min(MAX_CHARS, 2000)  # Reduce limit for low memory
             print(f"Reduced text limit to {MAX_CHARS} characters due to low memory")
-        
+
         if len(text) > MAX_CHARS:
             print(f"Warning: Text exceeds {MAX_CHARS} characters. Truncating to prevent memory issues.")
             text = text[:MAX_CHARS] + "..."
@@ -222,8 +223,8 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
         print(f"\nGenerating speech for: '{text}'")
         print(f"Using voice: {voice_name}")
 
-        # Validate voice path using Path for consistent handling
-        voice_path = Path("voices").resolve() / f"{voice_name}.pt"
+        # Validate voice path using safe helper to prevent path traversal
+        voice_path = get_safe_voice_path(voice_name)
         if not voice_path.exists():
             raise FileNotFoundError(f"Voice file not found: {voice_path}")
 
@@ -291,7 +292,7 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
         traceback.print_exc()
         return None
 
-def create_interface(server_name="127.0.0.1", server_port=7860):
+def create_interface(server_name="127.0.0.1", server_port=7860, auth=None):
     """Create and launch the Gradio interface."""
 
     # Get available voices
@@ -310,14 +311,14 @@ def create_interface(server_name="127.0.0.1", server_port=7860):
         with gr.Row():
             with gr.Column(scale=2):
                 gr.Markdown("## TTS Controls")
-            
+
             with gr.Column(scale=1):
                 gr.Markdown("## Speed Dial")
-                
+
         with gr.Row(equal_height=True):
             with gr.Column(scale=2):
                 # Main TTS controls
-                
+
                 voice = gr.Dropdown(
                     choices=voices,
                     value=voices[0] if voices else None,
@@ -441,11 +442,14 @@ def create_interface(server_name="127.0.0.1", server_port=7860):
         )
 
     # Launch interface
-    interface.launch(
+    launch_kwargs = dict(
         server_name=server_name,
         server_port=server_port,
         share=False
     )
+    if auth is not None:
+        launch_kwargs["auth"] = auth
+    interface.launch(**launch_kwargs)
 
 def cleanup_resources():
     """Properly clean up resources when the application exits"""
@@ -582,12 +586,33 @@ def parse_arguments():
         default=7860,
         help="Port number to run the server on"
     )
+    parser.add_argument(
+        "--username",
+        type=str,
+        default=os.environ.get("KOKORO_TTS_USERNAME"),
+        help="Username for Gradio authentication "
+             "(or set KOKORO_TTS_USERNAME env var)"
+    )
+    parser.add_argument(
+        "--password",
+        type=str,
+        default=os.environ.get("KOKORO_TTS_PASSWORD"),
+        help="Password for Gradio authentication "
+             "(or set KOKORO_TTS_PASSWORD env var; preferred to avoid "
+             "leaking via shell history / process list)"
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
     try:
         args = parse_arguments()
-        create_interface(server_name=args.host, server_port=args.port)
+        auth = None
+        if args.username and args.password:
+            auth = [(args.username, args.password)]
+        elif args.username or args.password:
+            print("Warning: --username and --password must both be set "
+                  "to enable authentication; ignoring partial credentials.")
+        create_interface(server_name=args.host, server_port=args.port, auth=auth)
     finally:
         # Ensure cleanup even if Gradio encounters an error
         cleanup_resources()

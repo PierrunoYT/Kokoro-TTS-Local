@@ -4,7 +4,8 @@ import torch
 from kokoro import KPipeline
 import os
 import json
-import codecs
+import re
+import contextlib
 from pathlib import Path
 import numpy as np
 import shutil
@@ -15,6 +16,80 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Safe voice name regex (alphanumeric, underscore, dash only)
+_VOICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
+def get_safe_voice_path(voice_name: str) -> Path:
+    """Return a validated, canonical voice file path.
+
+    Raises ValueError if the voice name contains unsafe characters or the
+    resolved path escapes the voices directory (path traversal).
+    """
+    if not isinstance(voice_name, str):
+        raise ValueError("Voice name must be a string")
+
+    voice_name = voice_name.strip().removesuffix('.pt')
+
+    if not _VOICE_NAME_RE.match(voice_name):
+        raise ValueError(f"Invalid voice name: {voice_name!r}")
+
+    voices_dir = Path("voices").resolve()
+    voice_path = (voices_dir / f"{voice_name}.pt").resolve()
+
+    # Ensure the resolved path is still inside the voices directory
+    try:
+        voice_path.relative_to(voices_dir)
+    except ValueError as exc:
+        raise ValueError(f"Voice path escapes voices directory: {voice_path}") from exc
+    return voice_path
+
+
+def safe_json_load(fp, **kwargs):
+    """Load JSON from a file-like object with UTF-8 / BOM handling.
+
+    Unlike monkey-patching json.load, this is a standalone helper that
+    does not mutate global state. Accepts the same keyword-only options
+    as ``json.load`` (cls, object_hook, parse_float, ...).
+    """
+    if hasattr(fp, 'seek'):
+        fp.seek(0)
+
+    if hasattr(fp, 'buffer'):
+        # Use the raw byte stream directly so utf-8-sig strips any BOM
+        # reliably, regardless of the platform default text encoding.
+        content = fp.buffer.read().decode('utf-8-sig')
+    else:
+        content = fp.read()
+        if isinstance(content, bytes):
+            content = content.decode('utf-8-sig')
+        else:
+            content = content.lstrip('\ufeff')
+
+    try:
+        return json.loads(content, **kwargs)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parsing error: {e}")
+        raise
+
+
+@contextlib.contextmanager
+def _patched_json_load():
+    """Temporarily replace ``json.load`` with :func:`safe_json_load`.
+
+    Scoped, exception-safe context manager used to handle config files
+    that may contain a UTF-8 BOM. Callers should hold ``_pipeline_lock``
+    while inside this block so concurrent threads don't observe the
+    swapped global.
+    """
+    original = json.load
+    json.load = safe_json_load
+    try:
+        yield
+    finally:
+        json.load = original
+
 
 # Suppress warnings from pre-trained model
 warnings.filterwarnings("ignore", message="dropout option adds dropout after all but last recurrent layer")
@@ -33,79 +108,39 @@ if OFFLINE_MODE:
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-# Setup for safer cleanup
-import atexit
-import signal
-import sys
-
-# Track whether patches have been applied
-_patches_applied = {
-    'json_load': False
-}
-
 class EnhancedKPipeline(KPipeline):
     """Enhanced KPipeline with improved voice loading and error handling"""
-    
+
     def __init__(self, lang_code: str = 'a', model: bool = True):
         super().__init__(lang_code=lang_code, model=model)
         self.device = 'cpu'  # Default device
         if not hasattr(self, 'voices'):
             self.voices = {}
-    
+
     def load_voice(self, voice_path: str) -> torch.Tensor:
         """Load voice model with improved error handling and path validation"""
         voice_path = Path(voice_path).resolve()
-        
+
         if not voice_path.exists():
             raise FileNotFoundError(f"Voice file not found: {voice_path}")
-        
+
         voice_name = voice_path.stem
-        
+
         try:
             logger.info(f"Loading voice: {voice_name} from {voice_path}")
             voice_model = torch.load(str(voice_path), weights_only=True, map_location='cpu')
-            
+
             if voice_model is None:
                 raise ValueError(f"Failed to load voice model from {voice_path}")
-            
+
             # Move model to device and store in voices dictionary
             self.voices[voice_name] = voice_model.to(self.device)
             logger.info(f"Successfully loaded voice: {voice_name}")
             return self.voices[voice_name]
-            
+
         except Exception as e:
             logger.error(f"Error loading voice {voice_name}: {e}")
             raise
-
-def _cleanup_patches() -> None:
-    """Restore original functions that were patched"""
-    try:
-        if _patches_applied['json_load'] and _original_json_load is not None:
-            restore_json_load()
-            _patches_applied['json_load'] = False
-            logger.info("Restored original json.load function")
-    except Exception as e:
-        logger.warning(f"Error restoring json.load: {e}")
-
-# Register cleanup for normal exit
-atexit.register(_cleanup_patches)
-
-def register_cleanup_signal_handlers() -> None:
-    """Install process signal handlers for patch cleanup.
-
-    This is opt-in to avoid import-time global signal side effects when models.py
-    is imported by other applications.
-    """
-    for sig in [signal.SIGINT, signal.SIGTERM]:
-        try:
-            signal.signal(sig, lambda signum, frame: (
-                logger.info(f"Received signal {signum}, cleaning up..."),
-                _cleanup_patches(),
-                sys.exit(1)
-            ))
-        except (ValueError, AttributeError) as e:
-            # Some signals might not be available on all platforms
-            logger.warning(f"Could not register signal handler: {e}")
 
 # List of available voice files (54 voices across 8 languages)
 VOICE_FILES = [
@@ -172,86 +207,21 @@ VOICE_PREFIX_TO_LANGUAGE_CODE = {
 }
 
 
-def patch_json_load() -> None:
-    """Patch json.load to handle UTF-8 encoded files with special characters"""
-    global _patches_applied, _original_json_load
-    if _patches_applied['json_load']:
-        return
-
-    _original_json_load = json.load  # Store for restoration
-
-    def read_json_content(fp, encoding: str) -> str:
-        if hasattr(fp, 'seek'):
-            fp.seek(0)
-
-        if hasattr(fp, 'buffer'):
-            raw_content = fp.buffer.read()
-            return raw_content.decode(
-                encoding,
-                errors='replace' if encoding == 'utf-8-sig' else 'strict'
-            ).lstrip('\ufeff')
-
-        content = fp.read()
-        if isinstance(content, bytes):
-            return content.decode(
-                encoding,
-                errors='replace' if encoding == 'utf-8-sig' else 'strict'
-            ).lstrip('\ufeff')
-        return content.lstrip('\ufeff')
-
-    def custom_load(fp, *args, **kwargs):
-        try:
-            content = read_json_content(fp, 'utf-8')
-        except UnicodeDecodeError:
-            content = read_json_content(fp, 'utf-8-sig')
-
-        try:
-            return json.loads(content, *args, **kwargs)
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {e}")
-            raise
-
-    json.load = custom_load
-    _patches_applied['json_load'] = True
-
-# Store the original load function for potential restoration
-_original_json_load = None
-
-def restore_json_load() -> None:
-    """Restore the original json.load function"""
-    global _original_json_load, _patches_applied
-    if _original_json_load is not None and _patches_applied['json_load']:
-        json.load = _original_json_load
-        _original_json_load = None
-        _patches_applied['json_load'] = False
-
-def load_config(config_path: str) -> dict:
-    """Load configuration file with proper encoding handling"""
-    config_path = Path(config_path).resolve()
-    
-    try:
-        with codecs.open(str(config_path), 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except UnicodeDecodeError:
-        # Fallback to utf-8-sig if regular utf-8 fails
-        with codecs.open(str(config_path), 'r', encoding='utf-8-sig') as f:
-            return json.load(f)
-
 # Initialize espeak-ng
 phonemizer_available = False  # Global flag to track if phonemizer is working
 current_phonemizer_lang = None  # Track current phonemizer language
 
 def initialize_phonemizer(language: str = 'en-us') -> bool:
     """Initialize phonemizer for a specific language
-    
+
     Args:
         language: Language code for phonemizer (e.g., 'en-us', 'zh')
-        
+
     Returns:
         True if initialization successful, False otherwise
     """
     global phonemizer_available, current_phonemizer_lang
-    
+
     try:
         from phonemizer.backend.espeak.wrapper import EspeakWrapper
         from phonemizer import phonemize
@@ -301,7 +271,6 @@ except Exception as e:
 # Initialize pipeline globally with thread safety
 _pipeline = None
 _pipeline_lock = threading.RLock()  # Reentrant lock for thread safety
-_voice_cache_lock = threading.RLock()  # Separate lock for voice cache operations
 _download_lock = threading.Lock()  # Lock for download operations
 
 def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: str = "main", required_count: int = 1) -> List[str]:
@@ -322,7 +291,7 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
     from tqdm import tqdm
     import hashlib
     import time
-    
+
     # Use absolute path for voices directory
     voices_dir = Path("voices").resolve()
     voices_dir.mkdir(exist_ok=True)
@@ -352,7 +321,7 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
     if not files_to_download and downloaded_voices:
         logger.info(f"All required voice files already exist ({len(downloaded_voices)} files)")
         return downloaded_voices
-    
+
     # In offline mode, only use existing files
     if OFFLINE_MODE:
         if not downloaded_voices:
@@ -371,14 +340,14 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
         """Download a single voice file with retry logic"""
         retry_count = 3
         retry_delay = 2
-        
+
         for attempt in range(retry_count):
             try:
                 # Download with exponential backoff
                 if attempt > 0:
                     delay = retry_delay * (2 ** (attempt - 1))
                     time.sleep(delay)
-                
+
                 # Download directly to voices directory
                 import tempfile
                 temp_dir = tempfile.mkdtemp()
@@ -391,15 +360,15 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
                         revision=repo_version,
                         local_files_only=OFFLINE_MODE
                     )
-                    
+
                     # Verify file integrity with basic size check
                     if Path(downloaded_path).stat().st_size == 0:
                         raise ValueError(f"Downloaded file {voice_file} has zero size")
-                    
+
                     # Move to final location
                     voice_path = voices_dir / voice_file
                     shutil.move(downloaded_path, str(voice_path))
-                    
+
                     return voice_file, True, f"Successfully downloaded {voice_file}"
                 finally:
                     # Clean up temporary directory
@@ -407,38 +376,38 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
                         shutil.rmtree(temp_dir)
                     except:
                         pass
-                    
+
             except Exception as e:
                 error_msg = f"Failed to download {voice_file} (attempt {attempt+1}/{retry_count}): {e}"
                 if attempt == retry_count - 1:
                     return voice_file, False, error_msg
                 logger.warning(error_msg)
-        
+
         return voice_file, False, f"Failed all {retry_count} attempts to download {voice_file}"
 
     # Download files with progress bar and parallel processing
     if files_to_download:
         logger.info(f"Downloading {len(files_to_download)} missing voice files...")
-        
+
         with ThreadPoolExecutor(max_workers=3) as executor:  # Limit concurrent downloads
             # Submit all download tasks
             future_to_voice = {
                 executor.submit(download_single_voice, voice_file): voice_file
                 for voice_file in files_to_download
             }
-            
+
             # Process completed downloads with progress bar
             with tqdm(total=len(files_to_download), desc="Downloading voices") as pbar:
                 for future in as_completed(future_to_voice):
                     voice_file, success, message = future.result()
-                    
+
                     if success:
                         downloaded_voices.append(voice_file)
                         logger.info(message)
                     else:
                         failed_voices.append(voice_file)
                         logger.error(message)
-                    
+
                     pbar.update(1)
 
     # Report results
@@ -499,11 +468,11 @@ def build_model(
                     error_msg = f"Model file {model_path} not found and running in OFFLINE mode. Please download the model first with network connection."
                     logger.error(error_msg)
                     raise ValueError(error_msg)
-                
+
                 logger.info(f"Downloading model file {model_path}...")
                 try:
                     from huggingface_hub import hf_hub_download
-                    
+
                     # Determine filename and repo for download
                     filename = 'kokoro-v1_1-zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
                     model_repo_id = "hexgrad/Kokoro-82M-v1.1-zh" if is_chinese_model else "hexgrad/Kokoro-82M"
@@ -528,7 +497,7 @@ def build_model(
                     error_msg = f"Config file {config_path} not found and running in OFFLINE mode. Please download the config first with network connection."
                     logger.error(error_msg)
                     raise ValueError(error_msg)
-                
+
                 logger.info("Downloading config file...")
                 try:
                     from huggingface_hub import hf_hub_download
@@ -573,15 +542,14 @@ def build_model(
                 logger.info(f"Supported language codes: {', '.join(supported_codes)}")
                 lang_code = 'a'
 
-            # Initialize pipeline with validated language code
-            patch_applied_here = not _patches_applied['json_load']
-            if patch_applied_here:
-                patch_json_load()
-            try:
+            # Initialize pipeline with validated language code.
+            # KPipeline internally calls json.load on config.json; some upstream
+            # configs contain a UTF-8 BOM which the standard json.load cannot
+            # handle. We temporarily swap json.load only inside this block so
+            # other libraries are unaffected. _pipeline_lock is already held
+            # by the caller, serialising the global mutation.
+            with _patched_json_load():
                 pipeline_instance = EnhancedKPipeline(lang_code=lang_code)
-            finally:
-                if patch_applied_here:
-                    restore_json_load()
 
             if pipeline_instance is None:
                 raise ValueError("Failed to initialize EnhancedKPipeline - pipeline is None")
@@ -699,21 +667,21 @@ def load_voice(voice_name: str, device: str) -> torch.Tensor:
         Loaded voice model tensor
 
     Raises:
-        ValueError: If voice file not found or loading fails
+        ValueError: If voice name is invalid, voice file not found, or loading fails
     """
-    # Format voice path correctly - strip .pt if it was included
-    voice_name = voice_name.replace('.pt', '')
-    pipeline = build_model(None, device, lang_code=get_language_code_from_voice(voice_name))
-    voice_path = Path("voices").resolve() / f"{voice_name}.pt"
+    voice_path = get_safe_voice_path(voice_name)
+    voice_name_clean = voice_path.stem
 
     if not voice_path.exists():
         raise ValueError(f"Voice file not found: {voice_path}")
 
+    pipeline = build_model(None, device, lang_code=get_language_code_from_voice(voice_name_clean))
+
     # Use a lock to ensure thread safety when loading voices
     with _pipeline_lock:
         # Check if voice is already loaded
-        if voice_name in pipeline.voices:
-            return pipeline.voices[voice_name]
+        if voice_name_clean in pipeline.voices:
+            return pipeline.voices[voice_name_clean]
 
         # Load voice if not already loaded
         return pipeline.load_voice(str(voice_path))
@@ -745,9 +713,9 @@ def generate_speech(
         if model is None:
             raise ValueError("Model is None - pipeline not properly initialized")
 
-        # Format voice name and path
-        voice_name = voice.replace('.pt', '')
-        voice_path = Path("voices").resolve() / f"{voice_name}.pt"
+        # Validate voice name and resolve safe path
+        voice_path = get_safe_voice_path(voice)
+        voice_name = voice_path.stem
 
         # Check if voice file exists
         if not voice_path.exists():
@@ -768,7 +736,9 @@ def generate_speech(
                 except Exception as e:
                     raise ValueError(f"Failed to load voice {voice_name}: {e}")
 
-        # Generate speech (outside the lock for better concurrency)
+        # Generate speech (outside the lock for better concurrency).
+        # Voice cache mutation is already protected above; the generator
+        # itself only reads from the cache.
         logger.info(f"Generating speech with device: {model.device}")
         generator = model(
             text,
@@ -777,12 +747,18 @@ def generate_speech(
             split_pattern=r'\n+'
         )
 
-        # Get first generated segment and convert numpy array to tensor if needed
+        audio_segments = []
+        phoneme_segments = []
         for gs, ps, audio in generator:
             if audio is not None:
                 if isinstance(audio, np.ndarray):
                     audio = torch.from_numpy(audio).float()
-                return audio, ps
+                audio_segments.append(audio)
+                if ps:
+                    phoneme_segments.append(ps)
+
+        if audio_segments:
+            return torch.cat(audio_segments, dim=0), "\n".join(phoneme_segments)
 
         return None, None
     except (ValueError, FileNotFoundError, RuntimeError, KeyError, AttributeError, TypeError) as e:

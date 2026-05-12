@@ -32,7 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import from local modules
-from models import build_model, generate_speech, EnhancedKPipeline
+from models import build_model, generate_speech, EnhancedKPipeline, get_safe_voice_path
 from chinese_config import (
     ChineseTextProcessor,
     ChineseTTSConfig,
@@ -111,7 +111,7 @@ def print_help():
     zf_xiaoni   - 晓妮 (Clear, friendly)
     zf_xiaoxiao - 晓晓 (Soft, gentle)
     zf_xiaoyi   - 晓艺 (Professional, articulate)
-  
+
   男性声音 (Male voices):
     zm_yunjian  - 云健 (Strong, confident)
     zm_yunxi    - 云析 (Warm, professional)
@@ -122,7 +122,7 @@ def print_help():
   Q: 提示"字数不匹配" (Word count mismatch warning)?
   A: 这通常是因为英文音素化器被用于中文文本。
      请确保使用正确的中文模型和配置。
-     
+
   Q: 生成的音频质量不好?
   A: 尝试调整语速，使用不同的声音。
      确保模型和声音文件完整。
@@ -135,23 +135,23 @@ def list_chinese_voices():
     print("\n" + "-"*60)
     print("可用声音 (Available Chinese Voices)")
     print("-"*60)
-    
+
     voices = get_chinese_voices()
-    
+
     # Organize by gender
     female_voices = [v for v in voices if v.startswith('zf_')]
     male_voices = [v for v in voices if v.startswith('zm_')]
-    
+
     print("\n女性声音 (Female Voices):")
     for i, voice in enumerate(female_voices, 1):
         info = get_chinese_voice_info(voice)
         print(f"  {i}. {voice} - {info['name']} ({info['description']})")
-    
+
     print("\n男性声音 (Male Voices):")
     for i, voice in enumerate(male_voices, 1):
         info = get_chinese_voice_info(voice)
         print(f"  {i+len(female_voices)}. {voice} - {info['name']} ({info['description']})")
-    
+
     print("-"*60 + "\n")
 
 
@@ -206,26 +206,26 @@ def select_sample_text() -> Optional[str]:
         print(f"{key}. {sample['title']}")
         if sample["text"]:
             print(f"   {sample['text'][:50]}...")
-    
+
     choice = input("\n请选择 (Select): ").strip()
-    
+
     if choice in SAMPLE_CHINESE_TEXTS:
         if SAMPLE_CHINESE_TEXTS[choice]["text"]:
             return SAMPLE_CHINESE_TEXTS[choice]["text"]
         else:
             # Custom input option
             return get_chinese_text_input()
-    
+
     return None
 
 
 def load_chinese_model(model_path: str, device: str) -> EnhancedKPipeline:
     """Load the Chinese TTS model
-    
+
     Args:
         model_path: Path to the Chinese model file
         device: Device to use ('cuda' or 'cpu')
-        
+
     Returns:
         EnhancedKPipeline instance configured for Chinese
     """
@@ -236,20 +236,20 @@ def load_chinese_model(model_path: str, device: str) -> EnhancedKPipeline:
             print(f"错误: 找不到模型文件 (Error: Model file not found): {model_file}")
             print(f"请确保您已下载 {DEFAULT_CHINESE_MODEL}")
             raise FileNotFoundError(f"Chinese model not found: {model_file}")
-        
+
         # Build model with Chinese language code
         logger.info(f"加载中文模型 (Loading Chinese model): {model_path}")
-        
+
         # Import build_model to use with Chinese config
         from models import build_model
-        
+
         # We'll use language code 'z' for Chinese (Mandarin)
         # Create a custom pipeline for Chinese
         pipeline = build_model(model_path, device, repo_version="main", lang_code='z')
-        
+
         logger.info("中文模型加载成功 (Chinese model loaded successfully)")
         return pipeline
-        
+
     except Exception as e:
         logger.error(f"加载中文模型时出错 (Error loading Chinese model): {e}")
         raise
@@ -263,14 +263,14 @@ def generate_chinese_speech(
     speed: float = 1.0
 ) -> Tuple[Optional[np.ndarray], Optional[str]]:
     """Generate speech for Chinese text
-    
+
     Args:
         model: EnhancedKPipeline instance
         text: Chinese text to synthesize
         voice: Voice name (e.g., 'zf_xiaobei')
         device: Device to use
         speed: Speech speed multiplier
-        
+
     Returns:
         Tuple of (audio_data, phonemes) or (None, None) on error
     """
@@ -278,27 +278,32 @@ def generate_chinese_speech(
         # Check if text contains Chinese characters
         if not ChineseTextProcessor.is_chinese(text):
             print("警告: 文本可能不是中文 (Warning: Text may not be Chinese)")
-        
+
         # Normalize Chinese text
         text = ChineseTextProcessor.normalize_chinese_text(text)
         logger.info(f"已规范化文本 (Normalized text): {text[:50]}...")
-        
+
         # Generate speech
         logger.info(f"生成语音... (Generating speech...)")
         print(f"  文本: {text[:100]}{'...' if len(text) > 100 else ''}")
         print(f"  声音: {voice}")
         print(f"  语速: {speed}x")
-        
-        # Load voice file
-        voice_path = Path("voices").resolve() / f"{voice}.pt"
+
+        # Validate voice path safely to prevent path traversal
+        try:
+            voice_path = get_safe_voice_path(voice)
+        except ValueError as e:
+            print(f"错误: {e}")
+            return None, None
+
         if not voice_path.exists():
             print(f"错误: 找不到声音文件 (Error: Voice file not found): {voice_path}")
             return None, None
-        
+
         # Generate using the model
         audio_segments = []
         all_phonemes = []
-        
+
         try:
             generator = model(
                 text,
@@ -306,7 +311,7 @@ def generate_chinese_speech(
                 speed=speed,
                 split_pattern=r'\n+'
             )
-            
+
             for gs, ps, audio in generator:
                 if audio is not None:
                     # Convert to numpy if needed
@@ -315,26 +320,26 @@ def generate_chinese_speech(
                     audio_segments.append(audio)
                     all_phonemes.append(ps)
                     logger.info(f"生成了句段: {gs} (Generated segment: {gs})")
-            
+
             # Concatenate all audio segments
             if audio_segments:
                 if len(audio_segments) == 1:
                     final_audio = audio_segments[0]
                 else:
                     final_audio = np.concatenate(audio_segments, axis=0)
-                
+
                 all_phonemes_str = " ".join(all_phonemes) if all_phonemes else ""
                 return final_audio, all_phonemes_str
             else:
                 print("错误: 没有生成音频 (Error: No audio was generated)")
                 return None, None
-                
+
         except Exception as e:
             logger.error(f"生成过程中出错 (Error during generation): {e}")
             import traceback
             traceback.print_exc()
             return None, None
-            
+
     except Exception as e:
         logger.error(f"生成语音时出错 (Error generating speech): {e}")
         import traceback
@@ -344,27 +349,27 @@ def generate_chinese_speech(
 
 def save_audio(audio_data: np.ndarray, output_path: str = DEFAULT_CHINESE_OUTPUT) -> bool:
     """Save generated audio to file
-    
+
     Args:
         audio_data: Audio data as numpy array
         output_path: Path to save the audio file
-        
+
     Returns:
         True if successful, False otherwise
     """
     try:
         output_path = Path(output_path).resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Remove existing file if it exists
         if output_path.exists():
             output_path.unlink()
-        
+
         logger.info(f"保存音频到 (Saving audio to): {output_path}")
         sf.write(str(output_path), audio_data, SAMPLE_RATE)
         print(f"✓ 音频已保存 (Audio saved to): {output_path}")
         return True
-        
+
     except Exception as e:
         logger.error(f"保存音频时出错 (Error saving audio): {e}")
         print(f"✗ 无法保存音频 (Failed to save audio): {e}")
@@ -374,46 +379,46 @@ def save_audio(audio_data: np.ndarray, output_path: str = DEFAULT_CHINESE_OUTPUT
 def main():
     """Main application loop"""
     print_chinese_header()
-    
+
     try:
         # Set up device
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"使用设备 (Using device): {device}\n")
-        
+
         # Load model
         print("初始化模型 (Initializing model)...")
         model = load_chinese_model(DEFAULT_CHINESE_MODEL, device)
         print("✓ 模型已加载 (Model loaded)\n")
-        
+
         # Get available voices
         voices = get_chinese_voices()
         if not voices:
             print("错误: 找不到中文声音文件 (Error: No Chinese voices found)")
             print(f"请确保中文声音文件在 voices/ 目录中")
             return
-        
+
         # Main loop
         while True:
             choice = print_menu()
-            
+
             if choice == "1":
                 # List voices
                 list_chinese_voices()
-                
+
             elif choice == "2":
                 # Generate speech from user input
                 voice = select_voice(voices)
                 text = get_chinese_text_input()
-                
+
                 if not text:
                     print("已取消 (Cancelled)")
                     continue
-                
+
                 speed = get_speech_speed()
-                
+
                 print("\n生成中... (Generating...)")
                 audio, phonemes = generate_chinese_speech(model, text, voice, device, speed)
-                
+
                 if audio is not None:
                     if save_audio(audio):
                         print("✓ 完成 (Done)")
@@ -421,17 +426,17 @@ def main():
                         print("✗ 保存失败 (Save failed)")
                 else:
                     print("✗ 生成失败 (Generation failed)")
-                    
+
             elif choice == "3":
                 # Generate from sample text
                 text = select_sample_text()
                 if text:
                     voice = select_voice(voices)
                     speed = get_speech_speed()
-                    
+
                     print("\n生成中... (Generating...)")
                     audio, phonemes = generate_chinese_speech(model, text, voice, device, speed)
-                    
+
                     if audio is not None:
                         if save_audio(audio):
                             print("✓ 完成 (Done)")
@@ -439,19 +444,19 @@ def main():
                             print("✗ 保存失败 (Save failed)")
                     else:
                         print("✗ 生成失败 (Generation failed)")
-                        
+
             elif choice == "4":
                 # Help
                 print_help()
-                
+
             elif choice == "5":
                 # Exit
                 print("\n再见！(Goodbye!)")
                 break
-                
+
             else:
                 print("无效选择。请重试。(Invalid choice. Please try again.)")
-                
+
     except KeyboardInterrupt:
         print("\n\n用户中断 (User interrupted)")
     except Exception as e:
@@ -466,4 +471,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -1,6 +1,6 @@
 import torch
 from typing import Optional, Tuple, List, Union
-from models import build_model, generate_speech, list_available_voices
+from models import build_model, generate_speech, list_available_voices, get_safe_voice_path
 from tqdm.auto import tqdm
 import soundfile as sf
 from pathlib import Path
@@ -193,15 +193,15 @@ def save_audio_with_retry(audio_data: np.ndarray, sample_rate: int, output_path:
 def main() -> None:
     import psutil
     import gc
-    
+
     try:
         # Check system memory at startup
         memory = psutil.virtual_memory()
         available_gb = memory.available / (1024**3)
         total_gb = memory.total / (1024**3)
-        
+
         print(f"System memory: {available_gb:.1f}GB available / {total_gb:.1f}GB total")
-        
+
         if available_gb < 2.0:
             print("Warning: Low system memory detected. Consider closing other applications.")
             # Force garbage collection
@@ -251,13 +251,13 @@ def main() -> None:
                 # Dynamic text length validation based on available memory
                 memory = psutil.virtual_memory()
                 available_gb = memory.available / (1024**3)
-                
+
                 # Adjust max length based on available memory
                 dynamic_max_length = MAX_TEXT_LENGTH
                 if available_gb < 2.0:
                     dynamic_max_length = min(MAX_TEXT_LENGTH, 3000)
                     print(f"Reduced text limit to {dynamic_max_length} characters due to low memory")
-                
+
                 if len(text) > dynamic_max_length:
                     print(f"Text is too long ({len(text)} chars). Maximum allowed: {dynamic_max_length} characters.")
                     print("Please enter a shorter text.")
@@ -271,8 +271,12 @@ def main() -> None:
 
                 # Generate speech
                 all_audio = []
-                # Use Path object for consistent path handling
-                voice_path = Path("voices").resolve() / f"{voice}.pt"
+                # Validate voice path safely to prevent path traversal
+                try:
+                    voice_path = get_safe_voice_path(voice)
+                except ValueError as e:
+                    print(f"Error: {e}")
+                    continue
 
                 # Verify voice file exists
                 if not voice_path.exists():
