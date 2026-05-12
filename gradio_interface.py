@@ -104,7 +104,7 @@ def get_pipeline_for_voice(voice_name: str) -> EnhancedKPipeline:
     """
     Determine the language code from the voice prefix and return the associated pipeline.
     """
-    prefix = voice_name[:3].lower()
+    prefix = voice_name[:2].lower() if len(voice_name) >= 2 else "af"
     lang_code = LANG_MAP.get(prefix, "a")
     if lang_code not in pipelines:
         print(f"[INFO] Creating pipeline for lang_code='{lang_code}'")
@@ -256,7 +256,7 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
             if not all_audio:
                 raise Exception("No audio generated")
         except Exception as e:
-            raise Exception(f"Error in speech generation: {e}")
+            raise RuntimeError(f"Speech generation failed: {e}") from e
 
         # Combine audio segments and save
         if not all_audio:
@@ -352,8 +352,8 @@ def create_interface(server_name="127.0.0.1", server_port=7860, auth=None):
                         label="Output Format"
                     )
                     speed = gr.Slider(
-                        minimum=0.5,
-                        maximum=2.0,
+                        minimum=0.1,
+                        maximum=3.0,
                         value=1.0,
                         step=0.1,
                         label="Speed"
@@ -560,11 +560,15 @@ def signal_handler(signum, frame):
     cleanup_resources()
     sys.exit(0)
 
-# Register for common signals
-for sig in [signal.SIGINT, signal.SIGTERM]:
+# Register for common signals (Windows doesn't have SIGTERM)
+supported_signals = [signal.SIGINT]
+if hasattr(signal, 'SIGTERM'):
+    supported_signals.append(signal.SIGTERM)
+
+for sig in supported_signals:
     try:
         signal.signal(sig, signal_handler)
-    except (ValueError, AttributeError):
+    except (ValueError, OSError):
         # Some signals might not be available on all platforms
         pass
 

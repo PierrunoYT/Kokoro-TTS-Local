@@ -200,7 +200,7 @@ VOICE_PREFIX_TO_LANGUAGE_CODE = {
     'jf': 'j', 'jm': 'j',
     'zf': 'z', 'zm': 'z',
     'ef': 'e', 'em': 'e',
-    'ff': 'f', 'fm': 'f',
+    'ff': 'f',
     'hf': 'h', 'hm': 'h',
     'if': 'i', 'im': 'i',
     'pf': 'p', 'pm': 'p',
@@ -707,8 +707,6 @@ def generate_speech(
     Returns:
         Tuple of (audio tensor, phonemes string) or (None, None) on error
     """
-    global _pipeline_lock
-
     try:
         if model is None:
             raise ValueError("Model is None - pipeline not properly initialized")

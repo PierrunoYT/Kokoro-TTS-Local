@@ -427,7 +427,7 @@ def main() -> None:
 
                 # Clear any other model attributes that might hold references
                 try:
-                    for attr in list(model.__dict__.keys()):
+                    for attr in model.__dict__.keys():
                         if hasattr(model, attr) and not attr.startswith('__'):
                             try:
                                 delattr(model, attr)
@@ -436,13 +436,12 @@ def main() -> None:
                 except Exception as attr_error:
                     print(f"Error clearing model attributes: {attr_error}")
 
-                # Then delete the model
+                # Then set model to None
                 try:
-                    del model
                     model = None
-                    print("Model reference deleted")
+                    print("Model reference cleared")
                 except Exception as del_error:
-                    print(f"Error deleting model: {del_error}")
+                    print(f"Error clearing model: {del_error}")
 
             # Clean up voice cache
             if 'voices_cache' in locals() and voices_cache is not None:

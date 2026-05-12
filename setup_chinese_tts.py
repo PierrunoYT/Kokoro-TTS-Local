@@ -201,7 +201,7 @@ def download_voices() -> Tuple[int, int]:
             downloaded_path = hf_hub_download(
                 repo_id="hexgrad/Kokoro-82M",
                 filename=f"voices/{voice_file}",
-                local_dir=str(VOICES_DIR.parent),
+                local_dir=str(VOICES_DIR),
                 force_download=False
             )
             

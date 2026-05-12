@@ -22,7 +22,6 @@ REQUIRED_DEPENDENCIES = {
     'huggingface_hub': '0.10.0',
     'pydub': '0.25.0',
     'numpy': '1.19.0',
-    'pathlib': None,  # Built-in module
     'tqdm': '4.60.0'
 }
 
