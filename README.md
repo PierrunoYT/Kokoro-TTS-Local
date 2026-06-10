@@ -46,22 +46,25 @@ For complete details, see [`IMPROVEMENTS.md`](IMPROVEMENTS.md).
 
 ## Prerequisites
 
-- Python 3.8 or higher
+- Python 3.10–3.12 (**Python 3.13+ is not supported** — core dependencies such as `misaki`, `mishkal-hebrew`, and `numpy<2.0` do not provide packages for 3.13 yet)
 - FFmpeg (optional, for MP3/AAC conversion)
 - CUDA-compatible GPU (optional, for faster generation)
 - Git (for version control and package management)
 
 ## Installation
 
-1. Clone the repository and create a Python virtual environment:
+1. Clone the repository and create a Python virtual environment (use Python 3.10–3.12):
 ```bash
 # Windows
 python -m venv venv
 .\venv\Scripts\activate
+# If your default python is 3.13+, use a supported version instead, e.g.:
+# py -3.12 -m venv venv
 
 # Linux/macOS
 python3 -m venv venv
 source venv/bin/activate
+# If your default python3 is 3.13+, use e.g.: python3.12 -m venv venv
 ```
 
 2. Install dependencies:
@@ -482,18 +485,23 @@ This will automatically detect and report:
 
 ### Common Issues
 
-1. **Offline Mode / Network Connection Issues**
+1. **Installation Fails on Python 3.13+**
+   - **Problem:** `pip install -r requirements.txt` fails with errors like `Could not find a version that satisfies the requirement mishkal-hebrew>=0.3.2`, numpy build errors, or later `ModuleNotFoundError: No module named 'kokoro'`
+   - **Cause:** Several core dependencies (`misaki`, `mishkal-hebrew`, `numpy<2.0`) do not support Python 3.13 yet
+   - **Solution:** Create the virtual environment with Python 3.10–3.12, e.g. on Windows: `py -3.12 -m venv venv`
+
+2. **Offline Mode / Network Connection Issues**
    - **Problem:** Getting "Failed to resolve 'huggingface.co'" errors even with cached files
    - **Solution:** Enable offline mode with `export HF_HUB_OFFLINE=1` (Linux/macOS) or `$env:HF_HUB_OFFLINE="1"` (Windows)
    - **Verify:** Run `python test_offline.py` to confirm your offline setup is working
 
-2. **Model Download Issues**
+3. **Model Download Issues**
    - Ensure stable internet connection
    - Check Hugging Face is accessible
    - Verify sufficient disk space
    - Try clearing the `.cache/huggingface` directory
 
-3. **CUDA/GPU Issues**
+4. **CUDA/GPU Issues**
    - Verify CUDA installation with `nvidia-smi`
    - Update GPU drivers
    - Install PyTorch with CUDA support using the appropriate command:
@@ -517,19 +525,19 @@ This will automatically detect and report:
      ```
    - Fall back to CPU if needed
 
-4. **Audio Output Issues**
+5. **Audio Output Issues**
    - Check system audio settings
    - Verify output directory permissions
    - Install FFmpeg for MP3/AAC support
    - Try different output formats
 
-5. **Voice File Issues**
+6. **Voice File Issues**
    - Delete and let system redownload voice files
    - Check `voices/` directory permissions
    - Verify voice file integrity
    - Try using a different voice
 
-6. **Web Interface Issues**
+7. **Web Interface Issues**
    - Check port 7860 availability
    - Try different browser
    - Clear browser cache
