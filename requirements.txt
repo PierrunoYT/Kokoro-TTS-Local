@@ -36,5 +36,6 @@ ordered-set
 pypinyin
 pypinyin-dict
 
-# Hebrew Language Libraries
-mishkal-hebrew>=0.3.2
+# Note: mishkal-hebrew was removed because all its releases were deleted from
+# PyPI (the project was renamed to "phonikud"), which broke installation on
+# every Python version. Nothing in this repo imports it.

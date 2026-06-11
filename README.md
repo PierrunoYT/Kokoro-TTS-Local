@@ -46,7 +46,7 @@ For complete details, see [`IMPROVEMENTS.md`](IMPROVEMENTS.md).
 
 ## Prerequisites
 
-- Python 3.10–3.12 (**Python 3.13+ is not supported** — core dependencies such as `misaki`, `mishkal-hebrew`, and `numpy<2.0` do not provide packages for 3.13 yet)
+- Python 3.10–3.12 (**Python 3.13+ is not supported** — core dependencies such as `misaki` and `numpy<2.0` do not provide packages for 3.13 yet)
 - FFmpeg (optional, for MP3/AAC conversion)
 - CUDA-compatible GPU (optional, for faster generation)
 - Git (for version control and package management)
@@ -72,6 +72,11 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+3. (Optional) For Japanese voices (`jf_*`/`jm_*`), download the UniDic dictionary data (~1 GB, one-time). Without it, Japanese G2P fails:
+```bash
+python -m unidic download
+```
+
 **Alternative Installation (Simplified):**
 For a simpler setup, you can also install the official Kokoro package directly:
 ```bash
@@ -80,7 +85,7 @@ apt-get install espeak-ng  # On Linux
 # or brew install espeak  # On macOS
 ```
 
-3. (Optional) For GPU acceleration, install PyTorch with CUDA support:
+4. (Optional) For GPU acceleration, install PyTorch with CUDA support:
 ```bash
 # For CUDA 11.8
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -485,23 +490,33 @@ This will automatically detect and report:
 
 ### Common Issues
 
-1. **Installation Fails on Python 3.13+**
-   - **Problem:** `pip install -r requirements.txt` fails with errors like `Could not find a version that satisfies the requirement mishkal-hebrew>=0.3.2`, numpy build errors, or later `ModuleNotFoundError: No module named 'kokoro'`
-   - **Cause:** Several core dependencies (`misaki`, `mishkal-hebrew`, `numpy<2.0`) do not support Python 3.13 yet
+1. **Installation Fails with `No matching distribution found for mishkal-hebrew`**
+   - **Problem:** `pip install -r requirements.txt` aborts with `Could not find a version that satisfies the requirement mishkal-hebrew>=0.3.2 (from versions: none)` on any Python version, and `python tts_demo.py` later fails with `ModuleNotFoundError: No module named 'kokoro'`
+   - **Cause:** All `mishkal-hebrew` releases were deleted from PyPI (the project was renamed to `phonikud`). The aborted install means none of the other dependencies got installed either.
+   - **Solution:** Pull the latest version of this repo (`mishkal-hebrew` has been removed from `requirements.txt`) and re-run `pip install -r requirements.txt`
+
+2. **Installation Fails on Python 3.13+**
+   - **Problem:** `pip install -r requirements.txt` fails with numpy meson/ninja build errors or `Ignored the following versions that require a different python version` messages, or later `ModuleNotFoundError: No module named 'kokoro'`
+   - **Cause:** Several core dependencies (`misaki`, `numpy<2.0`) do not support Python 3.13 yet
    - **Solution:** Create the virtual environment with Python 3.10–3.12, e.g. on Windows: `py -3.12 -m venv venv`
 
-2. **Offline Mode / Network Connection Issues**
+3. **Japanese Voices Produce Wrong/Garbled Speech**
+   - **Problem:** Selecting a Japanese voice (e.g. `jf_alpha`) produces nonsense audio, or Japanese G2P fails with a dictionary error
+   - **Cause:** `fugashi`/`unidic` ship without dictionary data; it must be downloaded separately
+   - **Solution:** Run `python -m unidic download` (~1 GB, one-time) in your virtual environment
+
+4. **Offline Mode / Network Connection Issues**
    - **Problem:** Getting "Failed to resolve 'huggingface.co'" errors even with cached files
    - **Solution:** Enable offline mode with `export HF_HUB_OFFLINE=1` (Linux/macOS) or `$env:HF_HUB_OFFLINE="1"` (Windows)
    - **Verify:** Run `python test_offline.py` to confirm your offline setup is working
 
-3. **Model Download Issues**
+5. **Model Download Issues**
    - Ensure stable internet connection
    - Check Hugging Face is accessible
    - Verify sufficient disk space
    - Try clearing the `.cache/huggingface` directory
 
-4. **CUDA/GPU Issues**
+6. **CUDA/GPU Issues**
    - Verify CUDA installation with `nvidia-smi`
    - Update GPU drivers
    - Install PyTorch with CUDA support using the appropriate command:
@@ -525,19 +540,19 @@ This will automatically detect and report:
      ```
    - Fall back to CPU if needed
 
-5. **Audio Output Issues**
+7. **Audio Output Issues**
    - Check system audio settings
    - Verify output directory permissions
    - Install FFmpeg for MP3/AAC support
    - Try different output formats
 
-6. **Voice File Issues**
+8. **Voice File Issues**
    - Delete and let system redownload voice files
    - Check `voices/` directory permissions
    - Verify voice file integrity
    - Try using a different voice
 
-7. **Web Interface Issues**
+9. **Web Interface Issues**
    - Check port 7860 availability
    - Try different browser
    - Clear browser cache

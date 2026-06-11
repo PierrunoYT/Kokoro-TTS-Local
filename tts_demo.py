@@ -1,6 +1,6 @@
 import torch
 from typing import Optional, Tuple, List, Union
-from models import build_model, generate_speech, list_available_voices, get_safe_voice_path
+from models import build_model, generate_speech, list_available_voices, get_safe_voice_path, get_language_code_from_voice
 from tqdm.auto import tqdm
 import soundfile as sf
 from pathlib import Path
@@ -282,6 +282,18 @@ def main() -> None:
                 if not voice_path.exists():
                     print(f"Error: Voice file not found: {voice_path}")
                     continue
+
+                # The G2P pipeline is language-specific; rebuild it if the
+                # selected voice speaks a different language than the current
+                # pipeline (build_model reuses the pipeline when it matches)
+                lang_code = get_language_code_from_voice(voice)
+                if getattr(model, 'lang_code', None) != lang_code:
+                    print(f"Switching pipeline to language '{lang_code}'...")
+                    try:
+                        model = build_model(DEFAULT_MODEL_PATH, device, lang_code=lang_code)
+                    except Exception as e:
+                        print(f"Error switching language pipeline: {type(e).__name__}: {e}")
+                        continue
 
                 # Set a timeout for generation with per-segment timeout
                 max_gen_time = MAX_GENERATION_TIME
