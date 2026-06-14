@@ -502,8 +502,9 @@ This will automatically detect and report:
 
 3. **Japanese Voices Produce Wrong/Garbled Speech**
    - **Problem:** Selecting a Japanese voice (e.g. `jf_alpha`) produces nonsense audio, or Japanese G2P fails with a dictionary error
-   - **Cause:** `fugashi`/`unidic` ship without dictionary data; it must be downloaded separately
+   - **Cause 1:** `fugashi`/`unidic` ship without dictionary data; it must be downloaded separately
    - **Solution:** Run `python -m unidic download` (~1 GB, one-time) in your virtual environment
+   - **Cause 2:** Language routing — if you have already run `unidic download` but the web UI still produces garbled audio, the text may be running through the English G2P pipeline. This was a bug in `gradio_interface.py` (fixed) where the voice's language was misdetected; make sure you are on an up-to-date version.
 
 4. **Offline Mode / Network Connection Issues**
    - **Problem:** Getting "Failed to resolve 'huggingface.co'" errors even with cached files
