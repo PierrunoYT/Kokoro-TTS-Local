@@ -34,7 +34,7 @@ from typing import Union, List, Optional, Tuple, Dict, Any
 from models import (
     list_available_voices, build_model,
     generate_speech, download_voice_files, EnhancedKPipeline,
-    get_safe_voice_path
+    get_safe_voice_path, get_language_code_from_voice
 )
 import speed_dial
 
@@ -104,8 +104,7 @@ def get_pipeline_for_voice(voice_name: str) -> EnhancedKPipeline:
     """
     Determine the language code from the voice prefix and return the associated pipeline.
     """
-    prefix = voice_name[:2].lower() if len(voice_name) >= 2 else "af"
-    lang_code = LANG_MAP.get(prefix, "a")
+    lang_code = get_language_code_from_voice(voice_name)
     if lang_code not in pipelines:
         print(f"[INFO] Creating pipeline for lang_code='{lang_code}'")
         pipelines[lang_code] = build_model(None, device, lang_code=lang_code)
