@@ -23,6 +23,8 @@ import os
 import sys
 import platform
 from datetime import datetime
+import uuid
+import ipaddress
 import shutil
 from pathlib import Path
 import soundfile as sf
@@ -30,13 +32,15 @@ from pydub import AudioSegment
 import torch
 import numpy as np
 import argparse
+import threading
 from typing import Union, List, Optional, Tuple, Dict, Any
-from models import (
+from .models import (
     list_available_voices, build_model,
     generate_speech, download_voice_files, EnhancedKPipeline,
-    get_safe_voice_path, get_language_code_from_voice
+    get_safe_voice_path, get_language_code_from_voice, shutdown_pipelines,
+    get_base_dir
 )
-import speed_dial
+from . import speed_dial
 
 # Constants
 MAX_TEXT_LENGTH = 5000
@@ -58,35 +62,17 @@ def validate_sample_rate(rate: int) -> int:
     return rate
 
 # Global configuration
-CONFIG_FILE = Path("tts_config.json")  # Stores user preferences and paths
-DEFAULT_OUTPUT_DIR = Path("outputs")    # Directory for generated audio files
+CONFIG_FILE = get_base_dir() / "tts_config.json"  # Stores user preferences and paths
+DEFAULT_OUTPUT_DIR = get_base_dir() / "outputs"    # Directory for generated audio files
 SAMPLE_RATE = validate_sample_rate(24000)  # Validated sample rate
 
-# Initialize model globally
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = None
-
-LANG_MAP = {
-    "af_": "a", "am_": "a",
-    "bf_": "b", "bm_": "b",
-    "jf_": "j", "jm_": "j",
-    "zf_": "z", "zm_": "z",
-    "ef_": "e", "em_": "e",
-    "ff_": "f", "fm_": "f",
-    "hf_": "h", "hm_": "h",
-    "if_": "i", "im_": "i",
-    "pf_": "p", "pm_": "p",
-}
-pipelines = {}
 
 def get_available_voices():
     """Get list of available voice models."""
     try:
         # Initialize model to trigger voice downloads
-        global model
-        if model is None:
-            print("Initializing model and downloading voices...")
-            model = build_model(None, device)
+        build_model(None, device)
 
         voices = list_available_voices()
         if not voices:
@@ -105,11 +91,7 @@ def get_pipeline_for_voice(voice_name: str) -> EnhancedKPipeline:
     Determine the language code from the voice prefix and return the associated pipeline.
     """
     lang_code = get_language_code_from_voice(voice_name)
-    if lang_code not in pipelines:
-        print(f"[INFO] Creating pipeline for lang_code='{lang_code}'")
-        pipelines[lang_code] = build_model(None, device, lang_code=lang_code)
-    pipelines[lang_code].device = device
-    return pipelines[lang_code]
+    return build_model(None, device, lang_code=lang_code)
 
 def convert_audio(input_path: PathLike, output_path: PathLike, format: str) -> Optional[PathLike]:
     """Convert audio to specified format.
@@ -145,7 +127,7 @@ def convert_audio(input_path: PathLike, output_path: PathLike, format: str) -> O
         if format.lower() == "mp3":
             audio.export(str(output_path), format="mp3", bitrate="192k")
         elif format.lower() == "aac":
-            audio.export(str(output_path), format="aac", bitrate="192k")
+            audio.export(str(output_path), format="adts", codec="aac", bitrate="192k")
         else:
             raise ValueError(f"Unsupported format: {format}")
 
@@ -175,7 +157,6 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
     Returns:
         Path to generated audio file or None on error
     """
-    global model
     import psutil
     import gc
 
@@ -190,11 +171,6 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-
-        # Initialize model if needed
-        if model is None:
-            print("Initializing model...")
-            model = build_model(None, device)
 
         # Create output directory
         DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -214,8 +190,11 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
             text = text[:MAX_CHARS] + "..."
 
         # Generate base filename from text
+        output_format = format.lower()
+        if output_format not in {'wav', 'mp3', 'aac'}:
+            raise ValueError(f"Unsupported format: {format}")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_name = f"tts_{timestamp}"
+        base_name = f"tts_{timestamp}_{uuid.uuid4().hex}"
         wav_path = DEFAULT_OUTPUT_DIR / f"{base_name}.wav"
 
         # Generate speech
@@ -228,11 +207,8 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
             raise FileNotFoundError(f"Voice file not found: {voice_path}")
 
         try:
-            if voice_name.startswith(tuple(LANG_MAP.keys())):
-                pipeline = get_pipeline_for_voice(voice_name)
-                generator = pipeline(text, voice=str(voice_path), speed=speed, split_pattern=r'\n+')
-            else:
-                generator = model(text, voice=str(voice_path), speed=speed, split_pattern=r'\n+')
+            pipeline = get_pipeline_for_voice(voice_name)
+            generator = pipeline.iter_speech(text, voice=str(voice_path), speed=speed, split_pattern=r'\n+')
 
             all_audio = []
             max_segments = 100  # Safety limit for very long texts
@@ -279,9 +255,12 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
             raise Exception(f"Failed to save audio file: {e}")
 
         # Convert to requested format if needed
-        if format.lower() != "wav":
-            output_path = DEFAULT_OUTPUT_DIR / f"{base_name}.{format.lower()}"
-            return convert_audio(wav_path, output_path, format.lower())
+        if output_format != "wav":
+            output_path = DEFAULT_OUTPUT_DIR / f"{base_name}.{output_format}"
+            converted = convert_audio(wav_path, output_path, output_format)
+            if converted is not None:
+                wav_path.unlink(missing_ok=True)
+            return converted
 
         return wav_path
 
@@ -452,52 +431,9 @@ def create_interface(server_name="127.0.0.1", server_port=7860, auth=None):
 
 def cleanup_resources():
     """Properly clean up resources when the application exits"""
-    global model
-
     try:
         print("Cleaning up resources...")
-
-        # Clean up model resources
-        if model is not None:
-            print("Releasing model resources...")
-
-            # Clear voice dictionary to release memory
-            if hasattr(model, 'voices') and model.voices is not None:
-                try:
-                    voice_count = len(model.voices)
-                    for voice_name in list(model.voices.keys()):
-                        try:
-                            # Release each voice explicitly
-                            model.voices[voice_name] = None
-                        except:
-                            pass
-                    model.voices.clear()
-                    print(f"Cleared {voice_count} voice references")
-                except Exception as ve:
-                    print(f"Error clearing voices: {type(ve).__name__}: {ve}")
-
-            # Clear model attributes that might hold tensors
-            for attr_name in dir(model):
-                if not attr_name.startswith('__') and hasattr(model, attr_name):
-                    try:
-                        attr = getattr(model, attr_name)
-                        # Handle specific tensor attributes
-                        if isinstance(attr, torch.Tensor):
-                            if attr.is_cuda:
-                                print(f"Releasing CUDA tensor: {attr_name}")
-                                setattr(model, attr_name, None)
-                        elif hasattr(attr, 'to'):  # Module or Tensor-like object
-                            setattr(model, attr_name, None)
-                    except:
-                        pass
-
-            # Delete model reference
-            try:
-                del model
-                model = None
-                print("Model reference deleted")
-            except Exception as me:
-                print(f"Error deleting model: {type(me).__name__}: {me}")
+        shutdown_pipelines()
 
         # Clear CUDA memory explicitly
         if torch.cuda.is_available():
@@ -512,13 +448,11 @@ def cleanup_resources():
 
                 # Free memory
                 print("Clearing CUDA cache...")
-                torch.cuda.empty_cache()
-
-                # Force synchronization
                 try:
                     torch.cuda.synchronize()
                 except:
                     pass
+                torch.cuda.empty_cache()
 
                 # Get final memory usage
                 try:
@@ -546,30 +480,28 @@ def cleanup_resources():
         import traceback
         traceback.print_exc()
 
-# Register cleanup for normal exit
 import atexit
-atexit.register(cleanup_resources)
-
-# Register cleanup for signals
 import signal
 import sys
 
 def signal_handler(signum, frame):
     print(f"\nReceived signal {signum}, shutting down...")
-    cleanup_resources()
-    sys.exit(0)
+    raise SystemExit(0)
 
-# Register for common signals (Windows doesn't have SIGTERM)
-supported_signals = [signal.SIGINT]
-if hasattr(signal, 'SIGTERM'):
-    supported_signals.append(signal.SIGTERM)
-
-for sig in supported_signals:
-    try:
-        signal.signal(sig, signal_handler)
-    except (ValueError, OSError):
-        # Some signals might not be available on all platforms
-        pass
+def register_cleanup_handlers():
+    """Register process handlers once, and only from the main thread."""
+    if threading.current_thread() is not threading.main_thread():
+        return False
+    atexit.register(cleanup_resources)
+    supported = {signal.SIGINT}
+    if hasattr(signal, 'SIGTERM'):
+        supported.add(signal.SIGTERM)
+    for sig in supported:
+        try:
+            signal.signal(sig, signal_handler)
+        except (ValueError, OSError, RuntimeError):
+            pass
+    return True
 
 def parse_arguments():
     """Parse command line arguments for host and port configuration."""
@@ -607,18 +539,27 @@ def parse_arguments():
     return parser.parse_args()
 
 def main() -> None:
+    cleanup_registered = False
     try:
+        cleanup_registered = register_cleanup_handlers()
         args = parse_arguments()
         auth = None
         if args.username and args.password:
             auth = [(args.username, args.password)]
         elif args.username or args.password:
-            print("Warning: --username and --password must both be set "
-                  "to enable authentication; ignoring partial credentials.")
+            raise ValueError("--username and --password must both be set")
+        try:
+            is_loopback = ipaddress.ip_address(args.host).is_loopback
+        except ValueError:
+            is_loopback = args.host.lower() == 'localhost'
+        if not is_loopback and auth is None:
+            raise ValueError("Non-loopback binding requires username and password")
         create_interface(server_name=args.host, server_port=args.port, auth=auth)
     finally:
         # Ensure cleanup even if Gradio encounters an error
         cleanup_resources()
+        if cleanup_registered:
+            atexit.unregister(cleanup_resources)
 
 if __name__ == "__main__":
     main()

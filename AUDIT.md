@@ -39,6 +39,30 @@ input-validation findings depends on the installed Gradio major version, likewis
 - **DATA-01:** Speed-dial mutations are protected by a process lock and use fsynced temporary files plus
   atomic replacement. Corrupt JSON now aborts mutations instead of being treated as an empty preset set.
 
+### 2026-07-29 — High findings resolved
+
+- **CONC-01 / FMT-01:** Web outputs use UUID-qualified names, AAC uses FFmpeg's ADTS muxer, and
+  converted intermediates are removed.
+- **CORE-03 / ARCH-01:** Voice routing uses one strict prefix mapping and rejects malformed or unknown
+  prefixes instead of silently selecting English or inferring Chinese from a parent directory name.
+- **LEGAL-01:** Wheel metadata now declares Apache-2.0 and includes `LICENSE`.
+- **SEC-01:** Non-loopback Gradio binding requires credentials; Compose requires both credentials,
+  publishes only on host loopback, and persists all application data in one managed volume.
+- **SEC-02:** The Claude workflow is restricted to trusted repository associations, uses immutable
+  action SHAs, removes OIDC write permission, and limits duplicate runs with concurrency controls.
+- **DEAD-01 / ARCH-02:** The download lock protects atomic artifact promotion, inert generation
+  parameters and duplicate mappings were removed, every component honors the shared path helpers, and
+  the unused `config.py` abstraction was deleted.
+- **CONC-02 / CONC-03 / SHUTDOWN-01:** Pipelines are cached by complete immutable identity, compatible
+  language pipelines share one model-family lock, construction is single-flight outside registry
+  locks, inference locks span lazy iteration, and idempotent shutdown drains work before releasing
+  models.
+- **PKG-01:** Runtime modules now install only inside the `kokoro_tts_local` namespace, console entry
+  points use that package, and mutable state defaults to a stable platform user-data directory.
+- **TEST-01:** Dependency-free regression tests cover checkpoint/config selection, persistence,
+  language routing, concurrent construction/inference, and shutdown; a least-privilege CI workflow
+  runs tests, compilation, wheel construction, installation, and entry-point checks.
+
 ---
 
 ## Executive summary

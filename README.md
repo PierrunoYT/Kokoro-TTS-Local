@@ -43,9 +43,9 @@ source venv/bin/activate
 # If your default python3 is 3.13+, use e.g.: python3.12 -m venv venv
 ```
 
-2. Install dependencies:
+2. Install the project and its dependencies:
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 3. (Optional) For Japanese voices (`jf_*`/`jm_*`), download the UniDic dictionary data (~1 GB, one-time). Without it, Japanese G2P fails:
@@ -53,15 +53,12 @@ pip install -r requirements.txt
 python -m unidic download
 ```
 
-**Install as a pip package (optional):**
-Instead of running the scripts from the repo directly, you can install this project itself as a package (editable install recommended while developing):
-```bash
-pip install -e .
-```
-This installs the dependencies from `pyproject.toml` and adds three console commands to your virtual environment, equivalent to running the corresponding script directly:
-- `kokoro-tts` — command-line interface (same as `python tts_demo.py`)
-- `kokoro-tts-web` — Gradio web interface (same as `python gradio_interface.py`)
-- `kokoro-tts-chinese` — Mandarin-focused CLI (same as `python chinese_tts_demo.py`)
+This adds the following console commands to your virtual environment:
+- `kokoro-tts` — command-line interface (`python -m kokoro_tts_local.tts_demo`)
+- `kokoro-tts-web` — Gradio web interface (`python -m kokoro_tts_local.gradio_interface`)
+- `kokoro-tts-chinese` — Mandarin CLI (`python -m kokoro_tts_local.chinese_tts_demo`)
+- `kokoro-tts-setup` — Mandarin model and voice setup
+- `kokoro-tts-check` — dependency diagnostics
 
 **Alternative Installation (Simplified):**
 For a simpler setup, you can also install the official Kokoro package directly:
@@ -104,10 +101,9 @@ This project can be run in a CPU-first Docker setup with runtime model and voice
 ```bash
 docker build -t kokoro-tts-local:cpu .
 docker run --rm -it \
-   -p 7860:7860 \
-   -v "$(pwd)/outputs:/app/outputs" \
-   -v "$(pwd)/voices:/app/voices" \
-   -v "$(pwd)/.cache:/app/.cache" \
+   -p 127.0.0.1:7860:7860 \
+   -e KOKORO_TTS_USERNAME=admin -e KOKORO_TTS_PASSWORD=change-me \
+   -v kokoro-data:/data \
    kokoro-tts-local:cpu
 ```
 
@@ -115,10 +111,9 @@ docker run --rm -it \
 ```powershell
 docker build -t kokoro-tts-local:cpu .
 docker run --rm -it `
-   -p 7860:7860 `
-   -v "${PWD}/outputs:/app/outputs" `
-   -v "${PWD}/voices:/app/voices" `
-   -v "${PWD}/.cache:/app/.cache" `
+   -p 127.0.0.1:7860:7860 `
+   -e KOKORO_TTS_USERNAME=admin -e KOKORO_TTS_PASSWORD=change-me `
+   -v kokoro-data:/data `
    kokoro-tts-local:cpu
 ```
 
@@ -127,13 +122,14 @@ Open `http://localhost:7860` in your browser.
 ### Run with Docker Compose
 
 ```bash
+export KOKORO_TTS_USERNAME=admin KOKORO_TTS_PASSWORD=change-me
 docker compose up --build
 ```
 
 ### Docker Notes
 
 - First startup can take longer because model and voice files are downloaded from Hugging Face.
-- Volumes for `outputs`, `voices`, and `.cache` are recommended so downloads and generated audio persist across restarts.
+- The `kokoro-data` volume persists checkpoints, configs, voices, presets, generated audio, and the Hugging Face cache under `/data`.
 - The Docker image pre-installs `en_core_web_sm` during build to avoid non-root runtime initialization errors.
 - This initial Docker support is CPU-first. GPU and pre-baked model image variants are intentionally out of scope for this first implementation.
 - To force offline mode after assets are downloaded, set `HF_HUB_OFFLINE=1` in your Docker environment.
@@ -147,19 +143,19 @@ After the initial setup, you can run Kokoro-TTS-Local completely offline without
 **Linux/macOS:**
 ```bash
 export HF_HUB_OFFLINE=1
-python tts_demo.py
+kokoro-tts
 ```
 
 **Windows (PowerShell):**
 ```powershell
 $env:HF_HUB_OFFLINE="1"
-python tts_demo.py
+kokoro-tts
 ```
 
 **Windows (Command Prompt):**
 ```cmd
 set HF_HUB_OFFLINE=1
-python tts_demo.py
+kokoro-tts
 ```
 
 ### Requirements for Offline Mode
@@ -191,25 +187,25 @@ For detailed offline usage instructions, set `HF_HUB_OFFLINE=1` before running a
 
 ## Configuring File Locations
 
-By default, Kokoro-TTS-Local looks for the model, config, and voice files relative to the current working directory (e.g. `./kokoro-v1_0.pth`, `./config.json`, `./voices/`). If you're integrating this project as a dependency or simply want the files stored elsewhere, you can override these locations with environment variables:
+By default, data is stored in a stable per-user `kokoro-tts-local` directory: `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS, and `$XDG_DATA_HOME` or `~/.local/share` on Unix. It does not depend on the current working directory.
 
 | Environment Variable | Description | Default |
 |---|---|---|
-| `KOKORO_BASE_DIR` | Base directory used to resolve the model, config, and voices locations below (unless individually overridden). | Current working directory |
+| `KOKORO_BASE_DIR` | Base directory for models, config, voices, outputs, and presets. | Platform user data directory |
 | `KOKORO_MODEL_DIR` | Directory to look for/download the model (`.pth`) and `config.json` files. | `KOKORO_BASE_DIR` |
 | `KOKORO_VOICES_DIR` | Directory to look for/download voice (`.pt`) files. | `KOKORO_BASE_DIR/voices` |
 | `KOKORO_CONFIG_PATH` | Full path to `config.json`. | `KOKORO_MODEL_DIR/config.json` |
 
 **Linux/macOS:**
 ```bash
-export KOKORO_BASE_DIR="$HOME/.local/share/kokoro-tts"
-python tts_demo.py
+export KOKORO_BASE_DIR="$HOME/.local/share/kokoro-tts-local"
+kokoro-tts
 ```
 
 **Windows (PowerShell):**
 ```powershell
 $env:KOKORO_BASE_DIR = "$HOME\.kokoro-tts"
-python tts_demo.py
+kokoro-tts
 ```
 
 Explicit `model_path` arguments passed to `build_model()` are still resolved relative to the current working directory, so existing scripts continue to work unchanged.
@@ -222,7 +218,7 @@ You can use either the command-line interface or the web interface:
 
 Run the interactive CLI:
 ```bash
-python tts_demo.py
+kokoro-tts
 ```
 
 The CLI provides an interactive menu with the following options:
@@ -266,7 +262,7 @@ Speed: 1.2x
 For a more user-friendly experience, launch the web interface:
 
 ```bash
-python gradio_interface.py
+kokoro-tts-web
 ```
 
 Then open your browser to the URL shown in the console (typically http://localhost:7860).
@@ -286,7 +282,7 @@ The web interface provides:
 Before running the application, you can validate your system setup:
 
 ```bash
-python dependency_checker.py
+kokoro-tts-check
 ```
 
 This will check:
@@ -298,24 +294,17 @@ This will check:
 
 ### Configuration Management
 
-The system now includes centralized configuration management:
+Application data locations can be inspected with the package path helpers:
 
 ```python
-from config import config
+from kokoro_tts_local.models import get_base_dir, get_model_dir, get_voices_dir
 
-# Get configuration values
-sample_rate = config.get("audio.sample_rate")
-max_text_length = config.get("limits.max_text_length")
-
-# Set configuration values
-config.set("audio.sample_rate", 48000)
-config.set("interface.auto_play", True)
-
-# Save configuration
-config.save()
+data_dir = get_base_dir()
+models_dir = get_model_dir()
+voices_dir = get_voices_dir()
 ```
 
-Configuration files are automatically created with sensible defaults.
+All three paths honor the `KOKORO_*` overrides described above.
 
 ## Available Voices
 
@@ -390,7 +379,7 @@ The system includes 54 different voices across 8 languages:
 - zm_yunxia: Chinese male voice (Grade D)
 - zm_yunyang: Chinese male voice (Grade D)
 
-**Note:** Run `python setup_chinese_tts.py` to download the Chinese model and voice files automatically. For full usage details see [CHINESE_TTS_GUIDE.md](CHINESE_TTS_GUIDE.md) or [README_CHINESE_TTS.md](README_CHINESE_TTS.md).
+**Note:** Run `python -m kokoro_tts_local.setup_chinese_tts` to download the Chinese model and voice files automatically. For full usage details see [CHINESE_TTS_GUIDE.md](CHINESE_TTS_GUIDE.md) or [README_CHINESE_TTS.md](README_CHINESE_TTS.md).
 
 ### 🇪🇸 Spanish (3 voices)
 **Language code: 'e'**
@@ -444,30 +433,23 @@ The system includes 54 different voices across 8 languages:
 
 ```
 .
-├── .cache/                 # Cache directory for downloaded models
-│   └── huggingface/       # Hugging Face model cache
-├── .git/                   # Git repository data
-├── .gitignore             # Git ignore rules
-├── __pycache__/           # Python cache files
-├── voices/                # Voice model files (downloaded on demand)
-│   └── *.pt              # Individual voice files
-├── venv/                  # Python virtual environment
-├── outputs/               # Generated audio files directory
-├── LICENSE                # Apache 2.0 License file
-├── README.md             # Project documentation
-├── README_CHINESE_TTS.md # Chinese TTS quick reference
-├── CHINESE_TTS_GUIDE.md  # Complete Chinese TTS guide
-├── models.py             # Core TTS model implementation
-├── gradio_interface.py   # Web interface implementation
-├── tts_demo.py          # CLI implementation (English)
-├── chinese_tts_demo.py   # CLI implementation (Chinese, 5-option menu)
-├── chinese_config.py     # Chinese text processing and voice configuration
-├── setup_chinese_tts.py  # Downloads Chinese model and voice files
-├── config.py            # Centralized configuration management
-├── dependency_checker.py # Dependency validation and system checks
-├── speed_dial.py        # Speed Dial preset management (save/load/delete)
-├── test_offline.py      # Offline mode verification script
-└── requirements.txt     # Python dependencies (no version constraints)
+├── src/kokoro_tts_local/
+│   ├── models.py             # Model registry, downloads, and inference
+│   ├── gradio_interface.py   # Authenticated web interface
+│   ├── tts_demo.py           # General CLI
+│   ├── chinese_tts_demo.py   # Mandarin-focused CLI
+│   ├── chinese_config.py     # Mandarin text and voice metadata
+│   ├── setup_chinese_tts.py  # Mandarin asset setup
+│   ├── speed_dial.py         # Durable preset storage
+│   └── paths.py              # Platform-aware data paths
+├── .github/workflows/        # CI and assistant workflows
+├── Dockerfile
+├── docker-compose.yml
+├── pyproject.toml
+├── test_critical_fixes.py
+├── test_offline.py
+├── LICENSE
+└── requirements.txt
 ```
 
 ## Model Information
@@ -489,7 +471,7 @@ Common issues and solutions:
 
 First, run the dependency checker to identify potential issues:
 ```bash
-python dependency_checker.py
+kokoro-tts-check
 ```
 
 This will automatically detect and report:
@@ -501,12 +483,12 @@ This will automatically detect and report:
 ### Common Issues
 
 1. **Installation Fails with `No matching distribution found for mishkal-hebrew`**
-   - **Problem:** `pip install -r requirements.txt` aborts with `Could not find a version that satisfies the requirement mishkal-hebrew>=0.3.2 (from versions: none)` on any Python version, and `python tts_demo.py` later fails with `ModuleNotFoundError: No module named 'kokoro'`
+   - **Problem:** installation aborts with `Could not find a version that satisfies the requirement mishkal-hebrew>=0.3.2 (from versions: none)` on any Python version, or `kokoro-tts` later fails with `ModuleNotFoundError: No module named 'kokoro'`
    - **Cause:** All `mishkal-hebrew` releases were deleted from PyPI (the project was renamed to `phonikud`). The aborted install means none of the other dependencies got installed either.
-   - **Solution:** Pull the latest version of this repo (`mishkal-hebrew` has been removed from `requirements.txt`) and re-run `pip install -r requirements.txt`
+   - **Solution:** Pull the latest version of this repo (`mishkal-hebrew` has been removed) and re-run `pip install -e .`
 
 2. **Installation Fails on Python 3.13+**
-   - **Problem:** `pip install -r requirements.txt` fails with numpy meson/ninja build errors or `Ignored the following versions that require a different python version` messages, or later `ModuleNotFoundError: No module named 'kokoro'`
+   - **Problem:** `pip install -e .` fails with numpy meson/ninja build errors or `Ignored the following versions that require a different python version` messages, or later `ModuleNotFoundError: No module named 'kokoro'`
    - **Cause:** Several core dependencies (`misaki`, `numpy<2.0`) do not support Python 3.13 yet
    - **Solution:** Create the virtual environment with Python 3.10–3.12, e.g. on Windows: `py -3.12 -m venv venv`
 

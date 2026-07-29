@@ -5,12 +5,15 @@ services:
       dockerfile: Dockerfile
     container_name: kokoro-tts-local
     ports:
-      - "7860:7860"
+      - "127.0.0.1:7860:7860"
     environment:
       # Set HF_HUB_OFFLINE=1 after the initial model download to run offline.
       HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-0}"
+      KOKORO_TTS_USERNAME: "${KOKORO_TTS_USERNAME:?KOKORO_TTS_USERNAME is required}"
+      KOKORO_TTS_PASSWORD: "${KOKORO_TTS_PASSWORD:?KOKORO_TTS_PASSWORD is required}"
     volumes:
-      - ./outputs:/app/outputs
-      - ./voices:/app/voices
-      - ./.cache:/app/.cache
+      - kokoro-data:/data
     restart: unless-stopped
+
+volumes:
+  kokoro-data:

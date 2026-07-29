@@ -1,6 +1,7 @@
 """Regression tests for the remediated critical audit findings."""
 
 import importlib.util
+import hashlib
 import json
 import os
 import sys
@@ -11,8 +12,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import setup_chinese_tts
-import speed_dial
+SRC = Path(__file__).parent / "src"
+sys.path.insert(0, str(SRC))
+
+from kokoro_tts_local import setup_chinese_tts, speed_dial
 
 
 class SpeedDialPersistenceTests(unittest.TestCase):
@@ -71,6 +74,8 @@ class ChineseSetupTests(unittest.TestCase):
         hub = types.SimpleNamespace(hf_hub_download=fake_download)
         with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(
             sys.modules, {"huggingface_hub": hub}
+        ), mock.patch.dict(
+            os.environ, {"KOKORO_BASE_DIR": temp_dir}, clear=False
         ), mock.patch.object(setup_chinese_tts, "CHINESE_VOICES", ["zf_test.pt"]):
             old_cwd = Path.cwd()
             os.chdir(temp_dir)
@@ -130,7 +135,7 @@ class ModelConstructionTests(unittest.TestCase):
         fake_kokoro.KPipeline = FakeKPipeline
 
         spec = importlib.util.spec_from_file_location(
-            "models_critical_test", Path(__file__).with_name("models.py")
+            "kokoro_tts_local.models_critical_test", SRC / "kokoro_tts_local" / "models.py"
         )
         module = importlib.util.module_from_spec(spec)
         with mock.patch.dict(
@@ -150,22 +155,19 @@ class ModelConstructionTests(unittest.TestCase):
             voices = root / "voices"
             voices.mkdir()
             (voices / "zf_test.pt").write_bytes(b"voice")
-            module.initialize_phonemizer = lambda language: True
             module.download_voice_files = lambda **kwargs: ["zf_test.pt"]
 
             pipeline = module.build_model(str(checkpoint), "cpu", lang_code="z")
             self.assertIs(pipeline.model, constructed[-1])
             self.assertEqual(constructed[-1].kwargs["model"], str(checkpoint))
-            self.assertEqual(
-                constructed[-1].kwargs["config"], str(chinese_config)
-            )
+            self.assertEqual(constructed[-1].kwargs["config"], {})
 
             override = root / "custom-config.json"
             override.write_text("{}", encoding="utf-8")
             with mock.patch.dict(os.environ, {"KOKORO_CONFIG_PATH": str(override)}):
                 replacement = module.build_model(str(checkpoint), "cpu", lang_code="z")
             self.assertIsNot(replacement, pipeline)
-            self.assertEqual(constructed[-1].kwargs["config"], str(override))
+            self.assertEqual(constructed[-1].kwargs["config"], {})
 
             (root / "kokoro-v1_0.pth").write_bytes(b"english")
             (root / "kokoro-v1_1-zh.pth").write_bytes(b"chinese")
@@ -181,6 +183,182 @@ class ModelConstructionTests(unittest.TestCase):
             self.assertEqual(
                 chinese.model.kwargs["model"], str(root / "kokoro-v1_1-zh.pth")
             )
+
+            revision = "release/test"
+            revision_id = hashlib.sha256(
+                f"hexgrad/Kokoro-82M@{revision}".encode("utf-8")
+            ).hexdigest()[:16]
+            revision_dir = root / "revisions" / revision_id
+            revision_dir.mkdir(parents=True)
+            revision_model = revision_dir / "kokoro-v1_0.pth"
+            revision_config = revision_dir / "config.json"
+            revision_model.write_bytes(b"revision checkpoint")
+            revision_config.write_text('{"revision": true}', encoding="utf-8")
+            versioned = module.build_model(
+                None, "cpu", repo_version=revision, lang_code="a"
+            )
+            self.assertEqual(versioned.model.kwargs["model"], str(revision_model))
+            self.assertEqual(versioned.model.kwargs["config"], {"revision": True})
+
+
+class ConcurrencyLifecycleTests(unittest.TestCase):
+    def test_registry_iteration_validation_and_shutdown(self):
+        """Exercise registry identity, family locking, and terminal shutdown."""
+        model_calls = []
+        active = 0
+        max_active = 0
+        active_lock = threading.Lock()
+
+        class FakeTensor:
+            def to(self, device):
+                return self
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.Tensor = FakeTensor
+        fake_torch.load = mock.Mock(return_value=FakeTensor())
+        fake_torch.from_numpy = lambda value: FakeTensor()
+        fake_torch.cat = lambda values, dim=0: FakeTensor()
+        fake_numpy = types.ModuleType("numpy")
+        fake_numpy.ndarray = type("ndarray", (), {})
+
+        class FakeKModel:
+            def __init__(self, **kwargs):
+                model_calls.append(self)
+                self.kwargs = kwargs
+
+            def to(self, device):
+                return self
+
+            def eval(self):
+                return self
+
+        class FakeKPipeline:
+            def __init__(self, lang_code, repo_id=None, model=True, **kwargs):
+                self.lang_code = lang_code
+                self.model = model
+                self.voices = {}
+
+            def __call__(self, *args, **kwargs):
+                nonlocal active, max_active
+                with active_lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                try:
+                    yield ("text", "phonemes", FakeTensor())
+                    # Keeping the generator suspended here verifies that the
+                    # family lock spans the complete lazy iteration.
+                    yield ("text2", "phonemes2", FakeTensor())
+                finally:
+                    with active_lock:
+                        active -= 1
+
+        fake_kokoro = types.ModuleType("kokoro")
+        fake_kokoro.KModel = FakeKModel
+        fake_kokoro.KPipeline = FakeKPipeline
+        name = f"kokoro_tts_local.models_concurrency_test_{id(self)}"
+        spec = importlib.util.spec_from_file_location(
+            name, SRC / "kokoro_tts_local" / "models.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.dict(sys.modules, {
+            "torch": fake_torch, "numpy": fake_numpy, "kokoro": fake_kokoro
+        }):
+            spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(
+            os.environ, {"KOKORO_BASE_DIR": temp_dir}, clear=False
+        ):
+            root = Path(temp_dir)
+            for filename in ("kokoro-v1_0.pth", "kokoro-v1_1-zh.pth",
+                             "config.json", "config-v1_1-zh.json"):
+                (root / filename).write_text("{}", encoding="utf-8")
+            voices = root / "voices"
+            voices.mkdir()
+            for filename in ("af_test.pt", "bf_test.pt", "zf_test.pt"):
+                (voices / filename).write_bytes(b"voice")
+            module.download_voice_files = lambda **kwargs: ["af_test.pt"]
+
+            results = []
+            threads = [threading.Thread(
+                target=lambda: results.append(module.build_model(None, "cpu", lang_code="a"))
+            ) for _ in range(12)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(len(results), 12)
+            self.assertTrue(all(item is results[0] for item in results))
+            self.assertEqual(len(model_calls), 1)
+
+            american = results[0]
+            british = module.build_model(None, "cpu", lang_code="b")
+            chinese = module.build_model(None, "cpu", lang_code="z")
+            self.assertIsNot(american, british)
+            self.assertIs(american.model, british.model)
+            self.assertIs(american._family_lock, british._family_lock)
+            self.assertIsNot(american.model, chinese.model)
+
+            with self.assertRaises(ValueError):
+                module.get_language_code_from_voice("xx_test")
+            with self.assertRaises(ValueError):
+                module.get_language_code_from_voice("aftest")
+            with self.assertRaises(ValueError):
+                american.iter_speech("hello", voice=str(voices / "bf_test.pt"))
+
+            american.voices["af_test"] = FakeTensor()
+            american.load_voice(str(voices / "af_test.pt"))
+            fake_torch.load.assert_not_called()
+
+            first_started = threading.Event()
+            release_first = threading.Event()
+
+            def consume_first():
+                generator = american.iter_speech("one", voice=str(voices / "af_test.pt"))
+                next(generator)
+                first_started.set()
+                release_first.wait(2)
+                list(generator)
+
+            first = threading.Thread(target=consume_first)
+            first.start()
+            self.assertTrue(first_started.wait(1))
+            second_done = threading.Event()
+            second_errors = []
+
+            def consume_second():
+                try:
+                    list(british.iter_speech("two", voice=str(voices / "bf_test.pt")))
+                except RuntimeError as exc:
+                    second_errors.append(exc)
+                finally:
+                    second_done.set()
+
+            second = threading.Thread(target=consume_second)
+            second.start()
+            self.assertFalse(second_done.wait(.05))
+
+            shutdown_done = []
+            shutdown_threads = [threading.Thread(target=lambda: (
+                module.shutdown_pipelines(), shutdown_done.append(True)
+            )) for _ in range(3)]
+            for thread in shutdown_threads:
+                thread.start()
+            self.assertFalse(any(not thread.is_alive() for thread in shutdown_threads))
+            with self.assertRaises(RuntimeError):
+                module.build_model(None, "cpu", lang_code="a")
+            release_first.set()
+            first.join(2)
+            second.join(2)
+            for thread in shutdown_threads:
+                thread.join(2)
+            self.assertEqual(len(shutdown_done), 3)
+            self.assertEqual(len(second_errors), 1)
+            self.assertEqual(max_active, 1)
+            self.assertTrue(american._closed)
+            self.assertIsNone(american.model)
+            with self.assertRaises(RuntimeError):
+                next(american.iter_speech("old", voice=str(voices / "af_test.pt")))
+            module.shutdown_pipelines()  # terminal and idempotent
 
 
 if __name__ == "__main__":

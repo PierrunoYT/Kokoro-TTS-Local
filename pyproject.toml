@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "kokoro-tts-local"
 version = "0.1.0"
 description = "Local text-to-speech generation using the Kokoro-82M model, with CLI and Gradio web interfaces"
 readme = "README.md"
-license = { text = "MIT" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10,<3.13"
 authors = [
     { name = "PierrunoYT" },
@@ -51,19 +52,11 @@ Homepage = "https://github.com/PierrunoYT/Kokoro-TTS-Local"
 Issues = "https://github.com/PierrunoYT/Kokoro-TTS-Local/issues"
 
 [project.scripts]
-kokoro-tts = "tts_demo:main"
-kokoro-tts-web = "gradio_interface:main"
-kokoro-tts-chinese = "chinese_tts_demo:main"
+kokoro-tts = "kokoro_tts_local.tts_demo:main"
+kokoro-tts-web = "kokoro_tts_local.gradio_interface:main"
+kokoro-tts-chinese = "kokoro_tts_local.chinese_tts_demo:main"
+kokoro-tts-setup = "kokoro_tts_local.setup_chinese_tts:cli"
+kokoro-tts-check = "kokoro_tts_local.dependency_checker:main"
 
-[tool.setuptools]
-py-modules = [
-    "models",
-    "config",
-    "chinese_config",
-    "tts_demo",
-    "gradio_interface",
-    "chinese_tts_demo",
-    "dependency_checker",
-    "speed_dial",
-    "setup_chinese_tts",
-]
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -16,9 +16,10 @@ import tempfile
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from .paths import get_base_dir
 
 # Define the path for the speed dial presets file
-SPEED_DIAL_FILE = Path("speed_dial.json")
+SPEED_DIAL_FILE = get_base_dir() / "speed_dial.json"
 
 _presets_lock = threading.RLock()
 

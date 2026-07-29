@@ -6,7 +6,7 @@ This script provides an interactive command-line interface for the Kokoro-v1.1-z
 Chinese TTS model. It handles Chinese-specific text processing and voice selection.
 
 Usage:
-    python chinese_tts_demo.py
+    kokoro-tts-chinese
 
 Requirements:
     - kokoro-v1_1-zh.pth model file
@@ -32,19 +32,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import from local modules
-from models import build_model, generate_speech, EnhancedKPipeline, get_safe_voice_path
-from chinese_config import (
+from .models import build_model, generate_speech, EnhancedKPipeline, get_safe_voice_path, shutdown_pipelines, get_base_dir, get_model_dir
+from .chinese_config import (
     ChineseTextProcessor,
     ChineseTTSConfig,
     CHINESE_VOICES,
     get_chinese_voices,
     get_chinese_voice_info
 )
-from config import TTSConfig
-
 # Constants
-DEFAULT_CHINESE_MODEL = "kokoro-v1_1-zh.pth"
-DEFAULT_CHINESE_OUTPUT = "output_chinese.wav"
+DEFAULT_CHINESE_MODEL = str(get_model_dir() / "kokoro-v1_1-zh.pth")
+DEFAULT_CHINESE_OUTPUT = str(get_base_dir() / "output_chinese.wav")
 SAMPLE_RATE = 24000
 MIN_SPEED = 0.5
 MAX_SPEED = 2.0
@@ -241,7 +239,7 @@ def load_chinese_model(model_path: str, device: str) -> EnhancedKPipeline:
         logger.info(f"加载中文模型 (Loading Chinese model): {model_path}")
 
         # Import build_model to use with Chinese config
-        from models import build_model
+        from .models import build_model
 
         # We'll use language code 'z' for Chinese (Mandarin)
         # Create a custom pipeline for Chinese
@@ -305,7 +303,7 @@ def generate_chinese_speech(
         all_phonemes = []
 
         try:
-            generator = model(
+            generator = model.iter_speech(
                 text,
                 voice=str(voice_path),
                 speed=speed,
@@ -465,7 +463,9 @@ def main():
         traceback.print_exc()
     finally:
         print("\n程序结束 (Program ended)")
+        shutdown_pipelines()
         if torch.cuda.is_available():
+            torch.cuda.synchronize()
             torch.cuda.empty_cache()
 
 

@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
+from .paths import get_base_dir, get_voices_dir
 
 logger = logging.getLogger(__name__)
 
@@ -152,8 +153,12 @@ class ChineseTTSConfig:
     """Specialized configuration manager for Chinese TTS"""
     
     def __init__(self, config_file: Optional[str] = None):
-        self.config_file = Path(config_file or "chinese_tts_config.json").resolve()
-        self.chinese_voices_dir = Path("voices").resolve()
+        self.config_file = (
+            Path(config_file).expanduser().resolve()
+            if config_file
+            else get_base_dir() / "chinese_tts_config.json"
+        )
+        self.chinese_voices_dir = get_voices_dir()
         self._config = self._load_default_config()
         self._load_config_file()
     
@@ -183,7 +188,7 @@ class ChineseTTSConfig:
             "paths": {
                 "voices_dir": "voices",
                 "models_dir": ".",
-                "output_dir": "outputs"
+                "output_dir": str(get_base_dir() / "outputs")
             }
         }
     
@@ -309,4 +314,3 @@ def normalize_chinese(text: str) -> str:
 def split_chinese_text(text: str, max_length: int = 100) -> List[str]:
     """Split Chinese text into segments"""
     return ChineseTextProcessor.split_chinese_text(text, max_length)
-

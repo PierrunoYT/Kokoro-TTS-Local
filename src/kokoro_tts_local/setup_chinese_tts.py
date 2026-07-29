@@ -6,7 +6,7 @@ This script downloads and sets up the Kokoro-v1.1-zh Chinese TTS model
 and all required voice files.
 
 Usage:
-    python setup_chinese_tts.py
+    python -m kokoro_tts_local.setup_chinese_tts
 """
 
 import os
@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 import logging
 from typing import List, Tuple
+from .paths import get_model_dir, get_voices_dir, get_config_path
 
 # Configure logging
 logging.basicConfig(
@@ -26,7 +27,13 @@ logger = logging.getLogger(__name__)
 # Configuration
 CHINESE_MODEL_FILE = "kokoro-v1_1-zh.pth"
 CONFIG_FILE = "config-v1_1-zh.json"
-VOICES_DIR = Path("voices").resolve()
+VOICES_DIR = get_voices_dir()
+
+def _model_path() -> Path:
+    return get_model_dir() / CHINESE_MODEL_FILE
+
+def _config_path() -> Path:
+    return get_config_path(is_chinese_model=True)
 
 CHINESE_VOICES = [
     # Female voices
@@ -72,7 +79,7 @@ def check_dependencies() -> bool:
     
     if missing:
         print(f"\n缺少必需的包 (Missing packages): {', '.join(missing)}")
-        print("请运行: pip install -r requirements.txt")
+        print("请运行: pip install -e .")
         return False
     
     print("✓ 所有依赖已安装 (All dependencies installed)\n")
@@ -116,7 +123,8 @@ def download_model() -> bool:
     print("\n下载中文TTS模型 (Downloading Chinese TTS Model)...")
     print("-" * 60)
     
-    model_path = Path(CHINESE_MODEL_FILE).resolve()
+    model_path = _model_path()
+    model_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Check if already exists
     if model_path.exists():
@@ -129,7 +137,7 @@ def download_model() -> bool:
     success = download_file(
         "hexgrad/Kokoro-82M-v1.1-zh",
         CHINESE_MODEL_FILE,
-        local_dir="."
+        local_dir=str(model_path.parent)
     )
     
     if success and model_path.exists():
@@ -146,7 +154,8 @@ def download_config() -> bool:
     print("下载配置文件 (Downloading Config File)...")
     print("-" * 60)
     
-    config_path = Path(CONFIG_FILE).resolve()
+    config_path = _config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Check if already exists
     if config_path.exists():
@@ -244,7 +253,7 @@ def verify_setup() -> bool:
     all_good = True
     
     # Check model
-    model_path = Path(CHINESE_MODEL_FILE).resolve()
+    model_path = _model_path()
     if model_path.exists():
         print(f"✓ 中文模型 (Chinese Model): {CHINESE_MODEL_FILE}")
     else:
@@ -252,7 +261,7 @@ def verify_setup() -> bool:
         all_good = False
     
     # Check config
-    config_path = Path(CONFIG_FILE).resolve()
+    config_path = _config_path()
     if config_path.exists():
         print(f"✓ 配置文件 (Config File): {CONFIG_FILE}")
     else:
@@ -286,8 +295,8 @@ def print_summary(success: bool, model_ok: bool, config_ok: bool, voices_count: 
     if success:
         print("\n✓ 设置完成！(Setup Complete!)")
         print("\n下一步 (Next Steps):")
-        print("1. 运行演示: python chinese_tts_demo.py")
-        print("   (Run demo: python chinese_tts_demo.py)")
+        print("1. 运行演示: kokoro-tts-chinese")
+        print("   (Run demo: kokoro-tts-chinese)")
     else:
         print("\n⚠ 设置未完成 (Setup Incomplete)")
         print("\n缺少的文件 (Missing Files):")
@@ -330,7 +339,8 @@ def main():
     return setup_ok
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Run setup and return a meaningful process status."""
     try:
         success = main()
         sys.exit(0 if success else 1)
@@ -342,3 +352,7 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    cli()

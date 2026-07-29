@@ -40,7 +40,7 @@ The **Kokoro-82M-v1.1_zh** is a fine-tuned Mandarin Chinese TTS model for high-q
 ### Automated Setup (Recommended)
 
 ```bash
-python setup_chinese_tts.py
+python -m kokoro_tts_local.setup_chinese_tts
 ```
 
 This script automatically downloads the model and all voice files.
@@ -51,19 +51,18 @@ This script automatically downloads the model and all voice files.
    ```bash
    # From Hugging Face
    git clone https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh
-   # Place kokoro-v1_1-zh.pth in project root
+   # Place kokoro-v1_1-zh.pth in KOKORO_MODEL_DIR (or KOKORO_BASE_DIR)
    ```
 
-2. **Download `config.json`** (from the base `hexgrad/Kokoro-82M` repo) into the project root.
+2. **Download `config.json` from `hexgrad/Kokoro-82M-v1.1-zh`** and save it as
+   `config-v1_1-zh.json` in `KOKORO_MODEL_DIR` (or `KOKORO_BASE_DIR`).
 
-3. **Download voice files** to `voices/` directory:
+3. **Download voice files** to `KOKORO_VOICES_DIR` (or `<KOKORO_BASE_DIR>/voices`):
    - Female: `zf_xiaobei.pt`, `zf_xiaoni.pt`, `zf_xiaoxiao.pt`, `zf_xiaoyi.pt`
    - Male: `zm_yunjian.pt`, `zm_yunxi.pt`, `zm_yunxia.pt`, `zm_yunyang.pt`
 
-4. **Install dependencies:**
+4. **Install the project and dependencies:**
    ```bash
-   pip install -r requirements.txt
-   # or, to install this project itself as a package:
    pip install -e .
    ```
 
@@ -74,7 +73,7 @@ This script automatically downloads the model and all voice files.
 ### Interactive CLI
 
 ```bash
-python chinese_tts_demo.py
+kokoro-tts-chinese
 # or, if installed via `pip install -e .`:
 kokoro-tts-chinese
 ```
@@ -89,7 +88,7 @@ The interactive menu provides:
 ### Python API
 
 ```python
-from chinese_tts_demo import load_chinese_model, generate_chinese_speech, save_audio
+from kokoro_tts_local.chinese_tts_demo import load_chinese_model, generate_chinese_speech, save_audio
 import torch
 
 # Load model
@@ -145,14 +144,14 @@ if audio is not None:
 
 ### "Model file not found"
 
-**Solution**: Run `python setup_chinese_tts.py` or download manually:
+**Solution**: Run `python -m kokoro_tts_local.setup_chinese_tts` or download manually:
 ```bash
 python -c "from huggingface_hub import hf_hub_download; hf_hub_download('hexgrad/Kokoro-82M-v1.1-zh', 'kokoro-v1_1-zh.pth', local_dir='.')"
 ```
 
 ### "Voice file not found"
 
-**Solution**: Run `python setup_chinese_tts.py` to download all voice files automatically.
+**Solution**: Run `python -m kokoro_tts_local.setup_chinese_tts` to download all voice files automatically.
 
 ### "No Chinese phonemizer support"
 
@@ -179,7 +178,7 @@ pip install phonemizer espeakng-loader
 The system automatically handles Chinese character validation, normalization, punctuation, and text segmentation. Use utilities for manual processing:
 
 ```python
-from chinese_config import ChineseTextProcessor
+from kokoro_tts_local.chinese_config import ChineseTextProcessor
 
 # Check if text is Chinese
 is_chinese = ChineseTextProcessor.is_chinese("你好")
@@ -228,7 +227,7 @@ $env:HF_HUB_OFFLINE="1"
 # Windows CMD
 set HF_HUB_OFFLINE=1
 
-python chinese_tts_demo.py
+kokoro-tts-chinese
 ```
 
 ## FAQ
@@ -254,4 +253,3 @@ A: Not yet, but you can modify `gradio_interface.py` to support Chinese.
 ---
 
 **Model**: Kokoro-82M-v1.1_zh
-

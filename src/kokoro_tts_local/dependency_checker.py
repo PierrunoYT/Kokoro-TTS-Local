@@ -1,4 +1,5 @@
-"""
+"""Dependency checks for the installed package.
+
 Dependency Version Checker for Kokoro TTS Local
 ----------------------------------------------
 This module checks if all required dependencies are installed and compatible.
@@ -239,9 +240,12 @@ def check_dependencies() -> bool:
     logger.info("All required dependencies are satisfied!")
     return True
 
-if __name__ == "__main__":
-    # Configure logging for standalone execution
+
+def main() -> None:
+    """Run dependency diagnostics as a console command."""
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-    
-    success = check_dependencies()
-    sys.exit(0 if success else 1)
+    sys.exit(0 if check_dependencies() else 1)
+
+
+if __name__ == "__main__":
+    main()

@@ -6,10 +6,10 @@ Quick start guide for Chinese TTS. For complete documentation, see [CHINESE_TTS_
 
 ```bash
 # 1. Setup (downloads model and voices)
-python setup_chinese_tts.py
+python -m kokoro_tts_local.setup_chinese_tts
 
 # 2. Run interactive demo
-python chinese_tts_demo.py
+kokoro-tts-chinese
 # or, if installed via `pip install -e .`:
 kokoro-tts-chinese
 ```
@@ -17,7 +17,7 @@ kokoro-tts-chinese
 ## Python API
 
 ```python
-from chinese_tts_demo import load_chinese_model, generate_chinese_speech, save_audio
+from kokoro_tts_local.chinese_tts_demo import load_chinese_model, generate_chinese_speech, save_audio
 import torch
 
 # Load model
@@ -57,8 +57,8 @@ if audio is not None:
 
 | Issue | Solution |
 |-------|----------|
-| Model not found | Run `python setup_chinese_tts.py` |
-| Voice files missing | Run `python setup_chinese_tts.py` |
+| Model not found | Run `python -m kokoro_tts_local.setup_chinese_tts` |
+| Voice files missing | Run `python -m kokoro_tts_local.setup_chinese_tts` |
 | "words count mismatch" warning | Use `chinese_tts_demo.py` (not `tts_demo.py`) |
 | Out of memory | System auto-falls back to CPU |
 

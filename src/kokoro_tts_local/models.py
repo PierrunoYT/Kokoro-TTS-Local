@@ -5,7 +5,7 @@ from kokoro import KModel, KPipeline
 import os
 import json
 import re
-import contextlib
+import hashlib
 from pathlib import Path
 import numpy as np
 import shutil
@@ -13,6 +13,7 @@ import tempfile
 import threading
 import warnings
 import logging
+from .paths import get_base_dir, get_voices_dir, get_model_dir, get_config_path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,55 +21,6 @@ logger = logging.getLogger(__name__)
 
 # Safe voice name regex (alphanumeric, underscore, dash only)
 _VOICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
-
-
-def get_base_dir() -> Path:
-    """Return the base directory used to resolve default file locations.
-
-    Resolution order:
-    1. ``KOKORO_BASE_DIR`` environment variable, if set.
-    2. The current working directory (preserves historical behavior).
-    """
-    base_dir = os.environ.get("KOKORO_BASE_DIR")
-    return Path(base_dir).resolve() if base_dir else Path.cwd()
-
-
-def get_voices_dir() -> Path:
-    """Return the directory containing voice (.pt) files.
-
-    Overridable via the ``KOKORO_VOICES_DIR`` environment variable
-    (absolute or relative path). Defaults to ``<base_dir>/voices``.
-    """
-    voices_dir = os.environ.get("KOKORO_VOICES_DIR")
-    if voices_dir:
-        return Path(voices_dir).resolve()
-    return (get_base_dir() / "voices").resolve()
-
-
-def get_model_dir() -> Path:
-    """Return the directory used to locate/download model and config files.
-
-    Overridable via the ``KOKORO_MODEL_DIR`` environment variable.
-    Defaults to the base directory (see :func:`get_base_dir`).
-    """
-    model_dir = os.environ.get("KOKORO_MODEL_DIR")
-    if model_dir:
-        return Path(model_dir).resolve()
-    return get_base_dir()
-
-
-def get_config_path(is_chinese_model: bool = False) -> Path:
-    """Return the path to ``config.json``.
-
-    Overridable via the ``KOKORO_CONFIG_PATH`` environment variable
-    (path to the file itself). Chinese and default models otherwise use
-    separate files so each checkpoint is paired with its repository config.
-    """
-    config_path = os.environ.get("KOKORO_CONFIG_PATH")
-    if config_path:
-        return Path(config_path).resolve()
-    filename = "config-v1_1-zh.json" if is_chinese_model else "config.json"
-    return (get_model_dir() / filename).resolve()
 
 
 def get_safe_voice_path(voice_name: str) -> Path:
@@ -124,23 +76,6 @@ def safe_json_load(fp, **kwargs):
         raise
 
 
-@contextlib.contextmanager
-def _patched_json_load():
-    """Temporarily replace ``json.load`` with :func:`safe_json_load`.
-
-    Scoped, exception-safe context manager used to handle config files
-    that may contain a UTF-8 BOM. Callers should hold ``_pipeline_lock``
-    while inside this block so concurrent threads don't observe the
-    swapped global.
-    """
-    original = json.load
-    json.load = safe_json_load
-    try:
-        yield
-    finally:
-        json.load = original
-
-
 # Suppress warnings from pre-trained model
 warnings.filterwarnings("ignore", message="dropout option adds dropout after all but last recurrent layer")
 warnings.filterwarnings("ignore", message="`torch.nn.utils.weight_norm` is deprecated")
@@ -166,7 +101,8 @@ class EnhancedKPipeline(KPipeline):
         lang_code: str = 'a',
         model=True,
         repo_id: Optional[str] = None,
-        device: str = 'cpu'
+        device: str = 'cpu',
+        family_lock: Optional[threading.RLock] = None,
     ):
         super().__init__(
             lang_code=lang_code,
@@ -175,17 +111,26 @@ class EnhancedKPipeline(KPipeline):
             device=device
         )
         self.device = device
+        self._family_lock = family_lock or threading.RLock()
+        self._published = False
+        self._closed = False
         if not hasattr(self, 'voices'):
             self.voices = {}
 
     def load_voice(self, voice_path: str) -> torch.Tensor:
         """Load voice model with improved error handling and path validation"""
+        with self._family_lock:
+            return self._load_voice_locked(voice_path)
+
+    def _load_voice_locked(self, voice_path: str) -> torch.Tensor:
         voice_path = Path(voice_path).resolve()
+
+        voice_name = voice_path.stem
+        if voice_name in self.voices:
+            return self.voices[voice_name]
 
         if not voice_path.exists():
             raise FileNotFoundError(f"Voice file not found: {voice_path}")
-
-        voice_name = voice_path.stem
 
         try:
             logger.info(f"Loading voice: {voice_name} from {voice_path}")
@@ -202,6 +147,35 @@ class EnhancedKPipeline(KPipeline):
         except Exception as e:
             logger.error(f"Error loading voice {voice_name}: {e}")
             raise
+
+    def iter_speech(self, *args, **kwargs):
+        """Iterate inference while exclusively owning this model family."""
+        voice = kwargs.get('voice')
+        if voice is None:
+            raise ValueError("voice is required")
+        voice_lang = get_language_code_from_voice(Path(voice).stem)
+        if voice_lang != self.lang_code:
+            raise ValueError(
+                f"Voice language {voice_lang!r} does not match pipeline language {self.lang_code!r}"
+            )
+
+        def guarded():
+            with self._family_lock:
+                with _registry_lock:
+                    unavailable = self._closed or _shutting_down
+                if unavailable:
+                    raise RuntimeError("Pipeline is closed")
+                yield from super(EnhancedKPipeline, self).__call__(*args, **kwargs)
+        return guarded()
+
+    def __call__(self, *args, **kwargs):
+        return self.iter_speech(*args, **kwargs)
+
+    def __setattr__(self, name, value):
+        if name in {'device', 'lang_code'} and getattr(self, '_published', False):
+            if getattr(self, name, value) != value:
+                raise AttributeError(f"{name} is immutable after pipeline publication")
+        super().__setattr__(name, value)
 
 # List of available voice files (54 voices across 8 languages)
 VOICE_FILES = [
@@ -267,72 +241,27 @@ VOICE_PREFIX_TO_LANGUAGE_CODE = {
     'pf': 'p', 'pm': 'p',
 }
 
+# Registries contain only fully-published objects. Construction is coordinated
+# by per-key events, so the registry lock is never held during I/O or inference.
+_registry_lock = threading.RLock()
+_download_lock = threading.Lock()
+_pipelines = {}
+_models = {}
+_building = {}
+_shutting_down = False
+_shutdown_complete = threading.Event()
 
-# Initialize espeak-ng
-phonemizer_available = False  # Global flag to track if phonemizer is working
-current_phonemizer_lang = None  # Track current phonemizer language
 
-def initialize_phonemizer(language: str = 'en-us') -> bool:
-    """Initialize phonemizer for a specific language
+class _Flight:
+    """A single construction attempt and its terminal failure, if any."""
+    def __init__(self):
+        self.event = threading.Event()
+        self.exception = None
 
-    Args:
-        language: Language code for phonemizer (e.g., 'en-us', 'zh')
-
-    Returns:
-        True if initialization successful, False otherwise
-    """
-    global phonemizer_available, current_phonemizer_lang
-
-    try:
-        from phonemizer.backend.espeak.wrapper import EspeakWrapper
-        from phonemizer import phonemize
-        import espeakng_loader
-
-        # Make library available first
-        library_path = espeakng_loader.get_library_path()
-        data_path = espeakng_loader.get_data_path()
-        espeakng_loader.make_library_available()
-
-        # Set up espeak-ng paths
-        EspeakWrapper.library_path = library_path
-        EspeakWrapper.data_path = data_path
-
-        # Verify espeak-ng is working with specified language
-        try:
-            test_text = 'test' if language in ['en-us', 'en-gb'] else '测试'
-            test_phonemes = phonemize(test_text, language=language)
-            if test_phonemes:
-                phonemizer_available = True
-                current_phonemizer_lang = language
-                logger.info(f"Phonemizer successfully initialized for language: {language}")
-                return True
-            else:
-                logger.warning("Phonemization returned empty result")
-                return False
-        except Exception as e:
-            # Continue without espeak functionality - be more specific about error types
-            if "espeak" in str(e).lower():
-                logger.warning(f"eSpeak not found: {e}")
-            else:
-                logger.warning(f"Phonemizer initialization error: {e}")
-            return False
-
-    except ImportError as e:
-        logger.warning(f"Phonemizer packages not installed: {e}")
-        logger.info("If you want phoneme visualization, manually install required packages:")
-        logger.info("pip install espeakng-loader phonemizer-fork")
-        return False
-
-# Initialize default English phonemizer
-try:
-    initialize_phonemizer('en-us')
-except Exception as e:
-    logger.warning(f"Could not initialize default phonemizer: {e}")
-
-# Initialize pipeline globally with thread safety
-_pipeline = None
-_pipeline_lock = threading.RLock()  # Reentrant lock for thread safety
-_download_lock = threading.Lock()  # Lock for download operations
+    def wait(self):
+        self.event.wait()
+        if self.exception is not None:
+            raise self.exception
 
 def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: str = "main", required_count: int = 1) -> List[str]:
     """Download voice files from Hugging Face with enhanced progress tracking.
@@ -409,34 +338,28 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
                     delay = retry_delay * (2 ** (attempt - 1))
                     time.sleep(delay)
 
-                # Download directly to voices directory
-                import tempfile
-                temp_dir = tempfile.mkdtemp()
-                try:
-                    downloaded_path = hf_hub_download(
-                        repo_id="hexgrad/Kokoro-82M",
-                        filename=f"voices/{voice_file}",
-                        local_dir=temp_dir,
-                        force_download=False,
-                        revision=repo_version,
-                        local_files_only=OFFLINE_MODE
-                    )
-
-                    # Verify file integrity with basic size check
-                    if Path(downloaded_path).stat().st_size == 0:
-                        raise ValueError(f"Downloaded file {voice_file} has zero size")
-
-                    # Move to final location
+                # Serialize check/download/promotion. The temporary directory is
+                # beside the destination, making os.replace atomic.
+                with _download_lock:
                     voice_path = voices_dir / voice_file
-                    shutil.move(downloaded_path, str(voice_path))
-
-                    return voice_file, True, f"Successfully downloaded {voice_file}"
-                finally:
-                    # Clean up temporary directory
+                    if voice_path.exists() and voice_path.stat().st_size > 0:
+                        return voice_file, True, f"Voice file {voice_file} already exists"
+                    temp_dir = tempfile.mkdtemp(dir=voices_dir, prefix='.voice-')
                     try:
+                        downloaded_path = hf_hub_download(
+                            repo_id="hexgrad/Kokoro-82M",
+                            filename=f"voices/{voice_file}",
+                            local_dir=temp_dir,
+                            force_download=False,
+                            revision=repo_version,
+                            local_files_only=OFFLINE_MODE
+                        )
+                        if Path(downloaded_path).stat().st_size == 0:
+                            raise ValueError(f"Downloaded file {voice_file} has zero size")
+                        os.replace(downloaded_path, voice_path)
+                        return voice_file, True, f"Successfully downloaded {voice_file}"
+                    finally:
                         shutil.rmtree(temp_dir)
-                    except:
-                        pass
 
             except Exception as e:
                 error_msg = f"Failed to download {voice_file} (attempt {attempt+1}/{retry_count}): {e}"
@@ -494,213 +417,119 @@ def build_model(
     repo_version: str = "main",
     lang_code: str = 'a'
 ) -> EnhancedKPipeline:
-    """Build and return the Enhanced Kokoro pipeline with proper encoding configuration
+    """Return a full-key cached pipeline using keyed single-flight creation."""
+    global _shutting_down
+    if lang_code not in LANGUAGE_CODES:
+        raise ValueError(f"Unsupported language code: {lang_code!r}")
+    chinese = lang_code == 'z'
+    repo = "hexgrad/Kokoro-82M-v1.1-zh" if chinese else "hexgrad/Kokoro-82M"
+    filename = 'kokoro-v1_1-zh.pth' if chinese else 'kokoro-v1_0.pth'
+    revision_dir = None
+    if repo_version != "main":
+        revision_id = hashlib.sha256(
+            f"{repo}@{repo_version}".encode("utf-8")
+        ).hexdigest()[:16]
+        revision_dir = get_model_dir() / "revisions" / revision_id
+    checkpoint = (
+        os.path.abspath(model_path)
+        if model_path
+        else str((revision_dir or get_model_dir()) / filename)
+    )
+    if os.environ.get("KOKORO_CONFIG_PATH"):
+        config_path = str(get_config_path(chinese))
+    else:
+        config_name = "config-v1_1-zh.json" if chinese else "config.json"
+        config_path = str((revision_dir or get_model_dir()) / config_name)
+    family_key = (repo, checkpoint, config_path, repo_version, device)
+    pipeline_key = family_key + (lang_code,)
 
-    Args:
-        model_path: Path to the model file or None to use default
-        device: Device to use ('cuda' or 'cpu')
-        repo_version: Version/tag of the repository to use (default: "main")
-        lang_code: Language code for the model (default: 'a' for American English, 'z' for Chinese)
+    while True:
+        with _registry_lock:
+            if _shutting_down:
+                raise RuntimeError("Pipeline registry is shutting down")
+            if pipeline_key in _pipelines:
+                return _pipelines[pipeline_key]
+            flight = _building.get(pipeline_key)
+            if flight is None:
+                flight = _building[pipeline_key] = _Flight()
+                break
+        flight.wait()
 
-    Returns:
-        Initialized EnhancedKPipeline instance
-    """
-    global _pipeline, _pipeline_lock
-
-    # Use a lock for thread safety
-    with _pipeline_lock:
-        try:
-            # Determine if this is a Chinese model
-            is_chinese_model = bool(
-                lang_code == 'z'
-                or (model_path is not None and 'zh' in Path(model_path).name.lower())
-            )
-            model_repo_id = (
-                "hexgrad/Kokoro-82M-v1.1-zh"
-                if is_chinese_model
-                else "hexgrad/Kokoro-82M"
-            )
-
-            # Directory used for locating/downloading the model and config
-            # files. Overridable via KOKORO_MODEL_DIR (see get_model_dir()).
-            model_dir = get_model_dir()
-
-            # Download model if it doesn't exist
-            if model_path is None:
-                default_filename = 'kokoro-v1_1-zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
-                model_path = str(model_dir / default_filename)
-            else:
-                # Explicit paths are resolved relative to the current
-                # working directory, preserving prior behavior.
-                model_path = os.path.abspath(model_path)
-
-            config_path = str(get_config_path(is_chinese_model))
-
-            # A cache hit is valid only for the same concrete checkpoint and
-            # runtime settings. In particular, do not silently discard an
-            # explicit fine-tune merely because its language code matches.
-            if (
-                _pipeline is not None
-                and getattr(_pipeline, 'lang_code', None) == lang_code
-                and getattr(_pipeline, '_model_path', None) == model_path
-                and getattr(_pipeline, '_config_path', None) == config_path
-                and getattr(_pipeline, '_repo_version', None) == repo_version
-                and getattr(_pipeline, 'device', None) == device
-            ):
-                return _pipeline
-
-            if not os.path.exists(model_path):
+    failure = None
+    try:
+        # Artifact operations alone use the download lock.
+        with _download_lock:
+            for target, remote in ((checkpoint, filename), (config_path, 'config.json')):
+                if os.path.exists(target):
+                    continue
                 if OFFLINE_MODE:
-                    error_msg = f"Model file {model_path} not found and running in OFFLINE mode. Please download the model first with network connection."
-                    logger.error(error_msg)
-                    raise ValueError(error_msg)
+                    raise ValueError(f"Required artifact not found in offline mode: {target}")
+                from huggingface_hub import hf_hub_download
+                parent = Path(target).parent
+                parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(dir=parent) as temp_dir:
+                    source = hf_hub_download(repo_id=repo, filename=remote,
+                        local_dir=temp_dir, revision=repo_version,
+                        local_files_only=OFFLINE_MODE)
+                    if os.path.getsize(source) == 0:
+                        raise ValueError(f"Downloaded artifact is empty: {remote}")
+                    os.replace(source, target)
 
-                logger.info(f"Downloading model file {model_path}...")
-                try:
-                    from huggingface_hub import hf_hub_download
+        download_voice_files(repo_version=repo_version, required_count=1)
+        with open(config_path, 'r', encoding='utf-8-sig') as config_file:
+            config = json.load(config_file)
 
-                    # Determine filename and repo for download
-                    filename = 'kokoro-v1_1-zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
-                    model_dir.mkdir(parents=True, exist_ok=True)
-                    model_path = hf_hub_download(
-                        repo_id=model_repo_id,
-                        filename=filename,
-                        local_dir=str(model_dir),
-                        force_download=False,
-                        revision=repo_version,
-                        local_files_only=OFFLINE_MODE
-                    )
-                    logger.info(f"Model downloaded to {model_path}")
-                except Exception as e:
-                    logger.error(f"Error downloading model: {e}")
-                    raise ValueError(f"Could not download model: {e}") from e
-
-            # Download config if it doesn't exist. Overridable via
-            # KOKORO_CONFIG_PATH (see get_config_path()).
-            if not os.path.exists(config_path):
-                if OFFLINE_MODE:
-                    error_msg = f"Config file {config_path} not found and running in OFFLINE mode. Please download the config first with network connection."
-                    logger.error(error_msg)
-                    raise ValueError(error_msg)
-
-                logger.info("Downloading config file...")
-                try:
-                    from huggingface_hub import hf_hub_download
-                    config_parent = Path(config_path).parent
-                    config_parent.mkdir(parents=True, exist_ok=True)
-                    with tempfile.TemporaryDirectory(dir=config_parent) as temp_dir:
-                        downloaded_config = hf_hub_download(
-                            repo_id=model_repo_id,
-                            filename="config.json",
-                            local_dir=temp_dir,
-                            force_download=False,
-                            revision=repo_version,
-                            local_files_only=OFFLINE_MODE
-                        )
-                        if os.path.getsize(downloaded_config) == 0:
-                            raise ValueError("Downloaded config file is empty")
-                        os.replace(downloaded_config, config_path)
-                    logger.info(f"Config downloaded to {config_path}")
-                except Exception as e:
-                    logger.error(f"Error downloading config: {e}")
-                    raise ValueError(f"Could not download config: {e}") from e
-
-            # Initialize phonemizer for the appropriate language
-            if is_chinese_model:
-                logger.info("Initializing phonemizer for Chinese...")
-                try:
-                    initialize_phonemizer('zh')
-                except Exception as e:
-                    logger.warning(f"Could not initialize Chinese phonemizer: {e}")
-            else:
-                logger.info("Initializing phonemizer for English...")
-                try:
-                    initialize_phonemizer('en-us')
-                except Exception as e:
-                    logger.warning(f"Could not initialize English phonemizer: {e}")
-
-            # Download voice files - require at least one voice
+        model_flight_key = ('model',) + family_key
+        model_owner = False
+        while True:
+            with _registry_lock:
+                family = _models.get(family_key)
+                if family is not None:
+                    break
+                model_flight = _building.get(model_flight_key)
+                if model_flight is None:
+                    model_flight = _building[model_flight_key] = _Flight()
+                    model_owner = True
+                    break
+            model_flight.wait()
+        if model_owner:
+            model_failure = None
             try:
-                downloaded_voices = download_voice_files(repo_version=repo_version, required_count=1)
-            except ValueError as e:
-                logger.error(f"Error: Voice files download failed: {e}")
-                raise ValueError("Voice files download failed") from e
-
-            # Validate language code
-            supported_codes = list(LANGUAGE_CODES.keys())
-            if lang_code not in supported_codes:
-                logger.warning(f"Unsupported language code '{lang_code}'. Using 'a' (American English).")
-                logger.info(f"Supported language codes: {', '.join(supported_codes)}")
-                lang_code = 'a'
-
-            # Initialize the concrete model and pass it to the pipeline.
-            # KPipeline(model=True) would ignore model_path and load its own
-            # repository default checkpoint instead.
-            # KPipeline internally calls json.load on config.json; some upstream
-            # configs contain a UTF-8 BOM which the standard json.load cannot
-            # handle. We temporarily swap json.load only inside this block so
-            # other libraries are unaffected. _pipeline_lock is already held
-            # by the caller, serialising the global mutation.
-            with _patched_json_load():
-                kokoro_model = KModel(
-                    repo_id=model_repo_id,
-                    config=config_path,
-                    model=model_path
-                ).to(device).eval()
-                pipeline_instance = EnhancedKPipeline(
-                    lang_code=lang_code,
-                    model=kokoro_model,
-                    repo_id=model_repo_id,
-                    device=device
-                )
-
-            if pipeline_instance is None:
-                raise ValueError("Failed to initialize EnhancedKPipeline - pipeline is None")
-
-            # Store language code and device
-            pipeline_instance.lang_code = lang_code
-            pipeline_instance.device = device
-            pipeline_instance._model_path = model_path
-            pipeline_instance._config_path = config_path
-            pipeline_instance._repo_version = repo_version
-
-            # Try to load the first available voice with improved error handling
-            voice_loaded = False
-            matching_voice_files = [
-                voice_file
-                for voice_file in downloaded_voices
-                if get_language_code_from_voice(Path(voice_file).stem) == lang_code
-            ]
-
-            if not matching_voice_files:
-                logger.warning(
-                    "No voice files matched language code '%s'; falling back to any downloaded voice",
-                    lang_code
-                )
-
-            for voice_file in matching_voice_files or downloaded_voices:
-                voice_path = str(get_voices_dir() / voice_file)
-                if os.path.exists(voice_path):
-                    try:
-                        pipeline_instance.load_voice(voice_path)
-                        logger.info(f"Successfully loaded voice: {voice_file}")
-                        voice_loaded = True
-                        break  # Successfully loaded a voice
-                    except Exception as e:
-                        logger.warning(f"Warning: Failed to load voice {voice_file}: {e}")
-                        continue
-
-            if not voice_loaded:
-                logger.warning("Warning: Could not load any voice models")
-
-            # Set the global _pipeline only after successful initialization
-            _pipeline = pipeline_instance
-
-        except Exception as e:
-            logger.error(f"Error initializing pipeline: {e}")
-            raise
-
-        return _pipeline
+                lock = threading.RLock()
+                kokoro_model = KModel(repo_id=repo, config=config, model=checkpoint).to(device).eval()
+                family = (kokoro_model, lock)
+                with _registry_lock:
+                    if _shutting_down:
+                        raise RuntimeError("Pipeline registry is shutting down")
+                    _models[family_key] = family
+            except BaseException as exc:
+                model_failure = exc
+                raise
+            finally:
+                with _registry_lock:
+                    _building.pop(model_flight_key, None)
+                    model_flight.exception = model_failure
+                    model_flight.event.set()
+        kokoro_model, family_lock = family
+        pipeline = EnhancedKPipeline(lang_code=lang_code, model=kokoro_model,
+            repo_id=repo, device=device, family_lock=family_lock)
+        pipeline._model_path = checkpoint
+        pipeline._config_path = config_path
+        pipeline._repo_version = repo_version
+        pipeline._published = True
+        with _registry_lock:
+            if _shutting_down:
+                raise RuntimeError("Pipeline registry is shutting down")
+            _pipelines[pipeline_key] = pipeline
+        return pipeline
+    except BaseException as exc:
+        failure = exc
+        raise
+    finally:
+        with _registry_lock:
+            _building.pop(pipeline_key, None)
+            flight.exception = failure
+            flight.event.set()
 
 def list_available_voices() -> List[str]:
     """List all available voice models"""
@@ -759,8 +588,13 @@ def get_language_code_from_voice(voice_name: str) -> str:
     Returns:
         Language code for the voice
     """
-    prefix = voice_name[:2].lower() if len(voice_name) >= 2 else 'af'
-    return VOICE_PREFIX_TO_LANGUAGE_CODE.get(prefix, 'a')  # Default to American English
+    name = Path(voice_name).stem
+    if len(name) < 3 or name[2] != '_':
+        raise ValueError("Voice name must begin with a two-character prefix and underscore")
+    prefix = name[:2].lower()
+    if prefix not in VOICE_PREFIX_TO_LANGUAGE_CODE:
+        raise ValueError(f"Unknown voice language prefix: {prefix!r}")
+    return VOICE_PREFIX_TO_LANGUAGE_CODE[prefix]
 
 def load_voice(voice_name: str, device: str) -> torch.Tensor:
     """Load a voice model in a thread-safe manner
@@ -783,21 +617,15 @@ def load_voice(voice_name: str, device: str) -> torch.Tensor:
 
     pipeline = build_model(None, device, lang_code=get_language_code_from_voice(voice_name_clean))
 
-    # Use a lock to ensure thread safety when loading voices
-    with _pipeline_lock:
-        # Check if voice is already loaded
+    with pipeline._family_lock:
         if voice_name_clean in pipeline.voices:
             return pipeline.voices[voice_name_clean]
-
-        # Load voice if not already loaded
         return pipeline.load_voice(str(voice_path))
 
 def generate_speech(
     model: EnhancedKPipeline,
     text: str,
     voice: str,
-    lang: str = 'a',
-    device: str = 'cpu',
     speed: float = 1.0
 ) -> Tuple[Optional[torch.Tensor], Optional[str]]:
     """Generate speech using the Kokoro pipeline in a thread-safe manner
@@ -825,12 +653,7 @@ def generate_speech(
         if not voice_path.exists():
             raise ValueError(f"Voice file not found: {voice_path}")
 
-        # Thread-safe initialization of model properties and voice loading
-        with _pipeline_lock:
-            # Ensure device is set
-            model.device = device
-
-            # Ensure voice is loaded before generating
+        with model._family_lock:
             if voice_name not in model.voices:
                 logger.info(f"Loading voice {voice_name}...")
                 try:
@@ -844,7 +667,7 @@ def generate_speech(
         # Voice cache mutation is already protected above; the generator
         # itself only reads from the cache.
         logger.info(f"Generating speech with device: {model.device}")
-        generator = model(
+        generator = model.iter_speech(
             text,
             voice=str(voice_path),
             speed=speed,
@@ -870,6 +693,48 @@ def generate_speech(
         return None, None
     except Exception as e:
         logger.error(f"Unexpected error during speech generation: {e}")
-        import traceback
-        traceback.print_exc()
         return None, None
+
+
+def shutdown_pipelines() -> None:
+    """Idempotently reject work, drain builds/inference, and clear registries."""
+    global _shutting_down
+    with _registry_lock:
+        if _shutting_down:
+            waiter = _shutdown_complete
+            owner = False
+        else:
+            _shutting_down = True
+            _shutdown_complete.clear()
+            waiter = _shutdown_complete
+            owner = True
+            flights = list(_building.values())
+    if not owner:
+        waiter.wait()
+        return
+
+    try:
+        # Builds never hold the registry lock while doing construction and all
+        # observe shutdown before publishing either a model or pipeline.
+        for flight in flights:
+            flight.event.wait()
+        with _registry_lock:
+            families = list(_models.values())
+        # Acquiring every family lock waits for lazy generators to finish.
+        locks = []
+        try:
+            for _, lock in families:
+                lock.acquire()
+                locks.append(lock)
+            with _registry_lock:
+                for pipeline in _pipelines.values():
+                    pipeline._closed = True
+                    pipeline.voices.clear()
+                    pipeline.model = None
+                _pipelines.clear()
+                _models.clear()
+        finally:
+            for lock in reversed(locks):
+                lock.release()
+    finally:
+        _shutdown_complete.set()

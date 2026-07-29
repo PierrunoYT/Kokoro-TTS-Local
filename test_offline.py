@@ -7,16 +7,19 @@ import sys
 from pathlib import Path
 import torch
 
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+from kokoro_tts_local.models import get_model_dir, get_config_path, get_voices_dir, get_base_dir
+
 # Constants
 REQUIRED_FILES = {
-    'model': 'kokoro-v1_0.pth',
-    'config': 'config.json',
-    'voices_dir': 'voices'
+    'model': get_model_dir() / 'kokoro-v1_0.pth',
+    'config': get_config_path(),
+    'voices_dir': get_voices_dir()
 }
 
 DEFAULT_TEST_TEXT = "Hello, this is a test of offline mode."
 DEFAULT_VOICE = "af_bella"
-TEST_OUTPUT = "test_offline_output.wav"
+TEST_OUTPUT = get_base_dir() / "test_offline_output.wav"
 
 def print_header(text: str):
     """Print a formatted header"""
@@ -127,7 +130,7 @@ def test_model_initialization() -> bool:
     print_header("Testing Model Initialization")
 
     try:
-        from models import build_model
+        from kokoro_tts_local.models import build_model
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"  Using device: {device}")
@@ -155,7 +158,7 @@ def test_voice_listing() -> bool:
     print_header("Testing Voice Listing")
 
     try:
-        from models import list_available_voices
+        from kokoro_tts_local.models import list_available_voices
 
         voices = list_available_voices()
 
@@ -181,7 +184,7 @@ def test_speech_generation() -> bool:
     print_header("Testing Speech Generation")
 
     try:
-        from models import build_model, list_available_voices, get_safe_voice_path
+        from kokoro_tts_local.models import build_model, list_available_voices, get_safe_voice_path
         import soundfile as sf
         import numpy as np
 
@@ -209,7 +212,7 @@ def test_speech_generation() -> bool:
         voice_path = get_safe_voice_path(voice)
 
         all_audio = []
-        generator = model(DEFAULT_TEST_TEXT, voice=str(voice_path), speed=1.0, split_pattern=r'\n+')
+        generator = model.iter_speech(DEFAULT_TEST_TEXT, voice=str(voice_path), speed=1.0, split_pattern=r'\n+')
 
         for gs, ps, audio in generator:
             if audio is not None:
@@ -291,8 +294,8 @@ def main():
         print("    - Model file (kokoro-v1_0.pth)")
         print("    - Config file (config.json)")
         print("    - At least one voice file in voices/ directory")
-        print("\n  Run: python tts_demo.py")
-        print("       or: python gradio_interface.py")
+        print("\n  Run: kokoro-tts")
+        print("       or: kokoro-tts-web")
         return 1
 
     # Check dependencies
@@ -308,7 +311,7 @@ def main():
     if not all_deps_present:
         print("\n[PREREQUISITE FAILED] Required dependencies are missing")
         print("  Please install required packages:")
-        print("    pip install -r requirements.txt")
+        print("    pip install -e .")
         return 1
 
     # Test model initialization

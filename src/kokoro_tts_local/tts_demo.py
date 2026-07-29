@@ -1,6 +1,6 @@
 import torch
 from typing import Optional, Tuple, List, Union
-from models import build_model, generate_speech, list_available_voices, get_safe_voice_path, get_language_code_from_voice
+from .models import build_model, generate_speech, list_available_voices, get_safe_voice_path, get_language_code_from_voice, shutdown_pipelines, get_base_dir, get_model_dir
 from tqdm.auto import tqdm
 import soundfile as sf
 from pathlib import Path
@@ -35,7 +35,7 @@ def validate_sample_rate(rate: int) -> int:
 def validate_language(lang: str) -> str:
     """Validate language code"""
     # Import here to avoid circular imports
-    from models import LANGUAGE_CODES
+    from .models import LANGUAGE_CODES
     valid_langs = list(LANGUAGE_CODES.keys())
     if lang not in valid_langs:
         print(f"Warning: Invalid language code '{lang}'. Using 'a' (American English).")
@@ -45,8 +45,8 @@ def validate_language(lang: str) -> str:
 
 # Define and validate constants
 SAMPLE_RATE = validate_sample_rate(24000)
-DEFAULT_MODEL_PATH = Path('kokoro-v1_0.pth').resolve()
-DEFAULT_OUTPUT_FILE = Path('output.wav').resolve()
+DEFAULT_MODEL_PATH = get_model_dir() / 'kokoro-v1_0.pth'
+DEFAULT_OUTPUT_FILE = get_base_dir() / 'output.wav'
 DEFAULT_LANGUAGE = validate_language('a')  # 'a' for American English, 'b' for British English
 DEFAULT_TEXT = "Hello, welcome to this text-to-speech test."
 
@@ -318,7 +318,7 @@ def main() -> None:
 
                     # Initialize generator
                     try:
-                        generator = model(text, voice=str(voice_path), speed=speed, split_pattern=r'\n+')
+                        generator = model.iter_speech(text, voice=str(voice_path), speed=speed, split_pattern=r'\n+')
                     except (ValueError, TypeError, RuntimeError) as e:
                         print(f"Error initializing speech generator: {e}")
                         watchdog.cancel()
@@ -425,35 +425,7 @@ def main() -> None:
         try:
             print("\nPerforming cleanup...")
 
-            # Ensure model is properly released
-            if 'model' in locals() and model is not None:
-                print("Cleaning up model resources...")
-                # First clear any references to voice models
-                if hasattr(model, 'voices'):
-                    try:
-                        voices_count = len(model.voices)
-                        model.voices.clear()
-                        print(f"Cleared {voices_count} voice references")
-                    except Exception as voice_error:
-                        print(f"Error clearing voice references: {voice_error}")
-
-                # Clear any other model attributes that might hold references
-                try:
-                    for attr in model.__dict__.keys():
-                        if hasattr(model, attr) and not attr.startswith('__'):
-                            try:
-                                delattr(model, attr)
-                            except:
-                                pass
-                except Exception as attr_error:
-                    print(f"Error clearing model attributes: {attr_error}")
-
-                # Then set model to None
-                try:
-                    model = None
-                    print("Model reference cleared")
-                except Exception as del_error:
-                    print(f"Error clearing model: {del_error}")
+            shutdown_pipelines()
 
             # Clean up voice cache
             if 'voices_cache' in locals() and voices_cache is not None:
@@ -468,6 +440,7 @@ def main() -> None:
             if torch.cuda.is_available():
                 try:
                     print("Cleaning up CUDA resources...")
+                    torch.cuda.synchronize()
                     torch.cuda.empty_cache()
                     print("CUDA cache emptied")
                 except Exception as cuda_error:
