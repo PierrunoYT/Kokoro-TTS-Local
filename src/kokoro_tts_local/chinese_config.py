@@ -105,19 +105,30 @@ class ChineseTextProcessor:
     
     @staticmethod
     def normalize_chinese_text(text: str) -> str:
-        """Normalize Chinese text for TTS processing"""
-        # Remove extra whitespace
-        text = ' '.join(text.split())
-        
-        # Ensure proper spacing around punctuation
+        """Normalize Chinese text for TTS processing.
+
+        Newlines are preserved. Every synthesis path splits on
+        ``split_pattern=r'\\n+'``, so collapsing them would hand the whole
+        input to the pipeline as a single chunk, where it hits Kokoro's
+        510-token limit and is silently truncated — a long article would
+        yield audio for only its opening lines, with no error anywhere.
+        """
         import re
-        # Add space after sentence punctuation, removing any existing spaces first.
-        # Keep brackets/quotes untouched to avoid introducing awkward spaces.
-        text = re.sub(r"\s*([。，！？；：])\s*", lambda m: m.group(1) + " ", text)
-        # Clean up any double spaces that may have been created
-        text = ' '.join(text.split())
-        
-        return text.strip()
+
+        def normalize_line(line: str) -> str:
+            # Collapse runs of intra-line whitespace only.
+            line = ' '.join(line.split())
+            # Add space after sentence punctuation, removing any existing
+            # spaces first. Keep brackets/quotes untouched to avoid
+            # introducing awkward spaces.
+            line = re.sub(r"[^\S\n]*([。，！？；：])[^\S\n]*",
+                          lambda m: m.group(1) + " ", line)
+            return ' '.join(line.split())
+
+        # Normalize each line independently, then drop blank lines so that
+        # runs of newlines collapse to a single separator.
+        lines = [normalize_line(line) for line in text.split('\n')]
+        return '\n'.join(line for line in lines if line).strip()
     
     @staticmethod
     def split_chinese_text(text: str, max_length: int = 100) -> List[str]:

@@ -5,7 +5,7 @@ A local implementation of the Kokoro Text-to-Speech model, featuring dynamic mod
 ## Features
 
 - Local text-to-speech synthesis using the Kokoro-82M model
-- Multiple voice support with easy voice selection (54 voices available across 8 languages)
+- Multiple voice support with easy voice selection (54 voices available across 9 languages)
 - Automatic model and voice downloading from Hugging Face
 - **Offline mode support** - Run completely offline after initial setup
 - Phoneme output support and visualization
@@ -308,7 +308,7 @@ All three paths honor the `KOKORO_*` overrides described above.
 
 ## Available Voices
 
-The system includes 54 different voices across 8 languages:
+The system includes 54 different voices across 9 languages:
 
 ### 🇺🇸 American English (20 voices)
 **Language code: 'a'**
@@ -459,7 +459,7 @@ The project uses the latest Kokoro model from Hugging Face:
 - Model file: `kokoro-v1_0.pth` (downloaded automatically)
 - Sample rate: 24kHz
 - Voice files: Located in the `voices/` directory (downloaded automatically)
-- Available voices: 54 voices across 8 languages
+- Available voices: 54 voices across 9 languages
 - Languages: American English ('a'), British English ('b'), Japanese ('j'), Mandarin Chinese ('z'), Spanish ('e'), French ('f'), Hindi ('h'), Italian ('i'), Brazilian Portuguese ('p')
 - Model size: 82M parameters
 

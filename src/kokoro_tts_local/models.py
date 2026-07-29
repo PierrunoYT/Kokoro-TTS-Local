@@ -81,8 +81,9 @@ def safe_json_load(fp, **kwargs):
 warnings.filterwarnings("ignore", message="dropout option adds dropout after all but last recurrent layer")
 warnings.filterwarnings("ignore", message="`torch.nn.utils.weight_norm` is deprecated")
 
-# Set environment variables for proper encoding
-os.environ["PYTHONIOENCODING"] = "utf-8"
+# Console encoding is handled by console.enable_utf8_console(); setting
+# PYTHONIOENCODING here would be a no-op, as the interpreter reads it only at
+# startup, long before this module is imported.
 # Disable symlinks warning
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
@@ -166,7 +167,20 @@ class EnhancedKPipeline(KPipeline):
                     unavailable = self._closed or _shutting_down
                 if unavailable:
                     raise RuntimeError("Pipeline is closed")
-                yield from super(EnhancedKPipeline, self).__call__(*args, **kwargs)
+                # Synthesis is pure inference: without this every segment
+                # builds an autograd graph and retains its activations, which
+                # is the straightest path to CUDA OOM under concurrent load.
+                #
+                # no_grad rather than inference_mode: the yielded tensors
+                # outlive this scope (callers concatenate them afterwards), and
+                # inference tensors carry escape restrictions that no_grad
+                # tensors do not. Grad mode is thread-local and this generator
+                # suspends at each yield, so it stays disabled in the consumer's
+                # loop body too — harmless, since the family lock makes this
+                # generator the only work running on this model, and the
+                # consumers only convert and collect tensors.
+                with torch.no_grad():
+                    yield from super(EnhancedKPipeline, self).__call__(*args, **kwargs)
         return guarded()
 
     def __call__(self, *args, **kwargs):

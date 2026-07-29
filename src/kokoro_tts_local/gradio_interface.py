@@ -147,27 +147,36 @@ def convert_audio(input_path: PathLike, output_path: PathLike, format: str) -> O
         traceback.print_exc()
         return None
 
-def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float = 1.0) -> Optional[PathLike]:
+def generate_tts_with_logs(
+    voice_name: str, text: str, format: str, speed: float = 1.0
+) -> Tuple[Optional[PathLike], str]:
     """Generate TTS audio with progress logging and memory management.
 
     Args:
         voice_name: Name of the voice to use
         text: Text to convert to speech
         format: Output format ('wav', 'mp3', 'aac')
+        speed: Speech speed multiplier
 
     Returns:
-        Path to generated audio file or None on error
+        ``(path, status)``. The status string is rendered in the UI: a remote
+        user has no access to this process's console, so a bare ``None`` left
+        them unable to tell a missing ffmpeg from a still-running request.
     """
     import psutil
     import gc
 
+    notes = []
     try:
         # Check available memory before processing
         memory = psutil.virtual_memory()
         available_gb = memory.available / (1024**3)
 
         if available_gb < 1.0:  # Less than 1GB available
-            print(f"Warning: Low memory available ({available_gb:.1f}GB). Consider closing other applications.")
+            message = (f"Low memory available ({available_gb:.1f}GB). "
+                       "Consider closing other applications.")
+            print(f"Warning: {message}")
+            notes.append(message)
             # Force garbage collection
             gc.collect()
             if torch.cuda.is_available():
@@ -180,14 +189,32 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
         if not text or not text.strip():
             raise ValueError("Text input cannot be empty")
 
+        # Validate speed server-side. The slider's bounds are advisory: a
+        # crafted request can send any float, and speed=1e-9 asks the vocoder
+        # to stretch the utterance by a factor of a billion. NaN is rejected
+        # explicitly because it fails both comparisons.
+        try:
+            speed = float(speed)
+        except (TypeError, ValueError):
+            raise ValueError(f"Speed must be a number, got {speed!r}")
+        if not (MIN_SPEED <= speed <= MAX_SPEED):
+            raise ValueError(
+                f"Speed must be between {MIN_SPEED} and {MAX_SPEED}, got {speed}"
+            )
+
         # Dynamic text length limit based on available memory
         MAX_CHARS = MAX_TEXT_LENGTH
         if available_gb < 2.0:  # Less than 2GB available
             MAX_CHARS = min(MAX_CHARS, 2000)  # Reduce limit for low memory
-            print(f"Reduced text limit to {MAX_CHARS} characters due to low memory")
+            message = f"Reduced text limit to {MAX_CHARS} characters due to low memory"
+            print(message)
+            notes.append(message)
 
         if len(text) > MAX_CHARS:
-            print(f"Warning: Text exceeds {MAX_CHARS} characters. Truncating to prevent memory issues.")
+            message = (f"Text exceeded {MAX_CHARS} characters and was truncated; "
+                       "only the beginning was synthesized.")
+            print(f"Warning: {message}")
+            notes.append(message)
             text = text[:MAX_CHARS] + "..."
 
         # Generate base filename from text
@@ -224,7 +251,10 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
                 for gs, ps, audio in generator:
                     segment_count += 1
                     if segment_count > max_segments:
-                        print(f"Warning: Reached maximum segment limit ({max_segments})")
+                        message = (f"Reached the {max_segments}-segment limit; "
+                                   "the audio is truncated.")
+                        print(f"Warning: {message}")
+                        notes.append(message)
                         break
 
                     if audio is not None:
@@ -265,17 +295,27 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
         if output_format != "wav":
             output_path = DEFAULT_OUTPUT_DIR / f"{base_name}.{output_format}"
             converted = convert_audio(wav_path, output_path, output_format)
-            if converted is not None:
-                wav_path.unlink(missing_ok=True)
-            return converted
+            if converted is None:
+                raise RuntimeError(
+                    f"Conversion to {output_format} failed. This usually means "
+                    "FFmpeg is not installed or not on PATH."
+                )
+            wav_path.unlink(missing_ok=True)
+            return converted, _status(f"Generated {segment_count} segment(s) as "
+                                      f"{output_format}.", notes)
 
-        return wav_path
+        return wav_path, _status(f"Generated {segment_count} segment(s) as wav.", notes)
 
     except Exception as e:
         print(f"Error generating speech: {e}")
         import traceback
         traceback.print_exc()
-        return None
+        return None, _status(f"{type(e).__name__}: {e}", notes)
+
+
+def _status(headline: str, notes: List[str]) -> str:
+    """Join a headline with any warnings collected during the request."""
+    return "\n".join([headline] + [f"- {note}" for note in notes])
 
 def create_interface(server_name="127.0.0.1", server_port=7860, auth=None):
     """Create and launch the Gradio interface."""
@@ -359,21 +399,39 @@ def create_interface(server_name="127.0.0.1", server_port=7860, auth=None):
             # Output section
             output = gr.Audio(label="Generated Audio")
 
-        # Function to load a preset
+        with gr.Row():
+            # Every handler reports here. Without it the only failure signal
+            # was an empty audio player, identical for empty input, a missing
+            # voice file, absent ffmpeg and CUDA OOM.
+            status = gr.Textbox(
+                label="Status",
+                value="Ready.",
+                lines=3,
+                interactive=False,
+                show_copy_button=True
+            )
+
+        # Function to load a preset. Returns gr.update() (leave unchanged)
+        # rather than None on the error paths: None is not a valid Slider
+        # value and would send speed=None into the pipeline on the next run.
         def load_preset_fn(preset_name):
+            unchanged = (gr.update(), gr.update(), gr.update(), gr.update())
             if not preset_name:
-                return None, None, None, None
+                return (*unchanged, "Select a preset to load.")
 
             preset = speed_dial.get_preset(preset_name)
             if not preset:
-                return None, None, None, None
+                return (*unchanged, f"Preset {preset_name!r} could not be loaded.")
 
-            return preset["voice"], preset["text"], preset["format"], preset["speed"]
+            return (preset["voice"], preset["text"], preset["format"],
+                    preset["speed"], f"Loaded preset {preset_name!r}.")
 
-        # Function to save a preset
+        # Function to save a preset. The status string goes to the status box,
+        # never into the dropdown — a dropdown whose selected value is an error
+        # message will feed that message back to get_preset() on the next Load.
         def save_preset_fn(name, voice, text, format, speed):
             if not name or not voice or not text:
-                return gr.update(value="Please provide a name, voice, and text")
+                return gr.update(), "Provide a name, a voice, and text to save a preset."
 
             success = speed_dial.save_preset(name, voice, text, format, speed)
 
@@ -381,14 +439,15 @@ def create_interface(server_name="127.0.0.1", server_port=7860, auth=None):
             preset_names = speed_dial.get_preset_names()
 
             if success:
-                return gr.update(choices=preset_names, value=name)
-            else:
-                return gr.update(choices=preset_names)
+                return (gr.update(choices=preset_names, value=name),
+                        f"Saved preset {name!r}.")
+            return (gr.update(choices=preset_names),
+                    f"Could not save preset {name!r}. Check the console for details.")
 
         # Function to delete a preset
         def delete_preset_fn(name):
             if not name:
-                return gr.update(value="Please select a preset to delete")
+                return gr.update(), "Select a preset to delete."
 
             success = speed_dial.delete_preset(name)
 
@@ -396,34 +455,35 @@ def create_interface(server_name="127.0.0.1", server_port=7860, auth=None):
             preset_names = speed_dial.get_preset_names()
 
             if success:
-                return gr.update(choices=preset_names, value=None)
-            else:
-                return gr.update(choices=preset_names)
+                return (gr.update(choices=preset_names, value=None),
+                        f"Deleted preset {name!r}.")
+            return (gr.update(choices=preset_names),
+                    f"Could not delete preset {name!r}. Check the console for details.")
 
         # Connect the buttons to their functions
         load_preset.click(
             fn=load_preset_fn,
             inputs=preset_dropdown,
-            outputs=[voice, text, format, speed]
+            outputs=[voice, text, format, speed, status]
         )
 
         save_preset.click(
             fn=save_preset_fn,
             inputs=[preset_name, voice, text, format, speed],
-            outputs=preset_dropdown
+            outputs=[preset_dropdown, status]
         )
 
         delete_preset.click(
             fn=delete_preset_fn,
             inputs=preset_dropdown,
-            outputs=preset_dropdown
+            outputs=[preset_dropdown, status]
         )
 
         # Connect the generate button
         generate.click(
             fn=generate_tts_with_logs,
             inputs=[voice, text, format, speed],
-            outputs=output
+            outputs=[output, status]
         )
 
     # Launch interface

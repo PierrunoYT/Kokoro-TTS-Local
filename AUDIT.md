@@ -14,7 +14,7 @@ concurrency/performance, architecture, and dependencies/testing/docs/CI.
 | Medium | ~55 |
 | Low | ~65 |
 
-## Current status — last reconciled 2026-07-29 against `ff524ed`
+## Current status — last reconciled 2026-07-29 against `HEAD`
 
 The finding bodies below describe the code **as audited at `a423e0f`** and are kept unedited as the
 historical record — their line numbers and file paths predate the `src/` layout move. Each finding
@@ -29,18 +29,23 @@ carries a status marker reflecting the current tree:
 | Severity | Resolved | Open / Partial | Obsolete | Not re-verified |
 |---|---|---|---|---|
 | Critical (4 detailed) | 4 | 0 | 0 | 0 |
-| High (15 detailed) | 14 | 1 (DOC-01) | 0 | 0 |
-| Medium (21 detailed) | 4 | 16 | 1 | 0 |
-| Low (30 tabulated) | 5 | 17 | 0 | 8 |
+| High (15 detailed) | 15 | 0 | 0 | 0 |
+| Medium (21 detailed) | 10 | 10 | 1 | 0 |
+| Low (30 tabulated) | 6 | 16 | 0 | 8 |
 
-**The critical and high tier is closed except DOC-01**, a three-line README correction that is the
-oldest untouched item in the report — the README still says "8 languages" in three places while
-`VOICE_PREFIX_TO_LANGUAGE_CODE` maps nine. The medium tier is largely untouched: the remaining
-sixteen are concentrated in `chinese_config.py` (config/text handling), the Gradio UX error paths,
-and dependency pinning — none of which any remediation commit has reached yet.
+**The critical and high tiers are closed.** All ten quick wins are done, and half the medium tier.
 
-Fixes landed in three commits: `2be12c6` (critical), `d87f7ed` (high), `ff524ed` (regressions found
-by reviewing the first two). See the remediation log below.
+The ten medium findings still open are: CFG-02 and CFG-04 (`chinese_config.py` merges arbitrary types
+and ignores its own `paths.voices_dir`), TEXT-02 (`is_chinese()` misclassifies Japanese kanji),
+CLI-01 and CLI-02 (`tts_demo.py` deletes the old output before validating the new one; the
+per-segment timeout truncates silently), PERF-02 (`dependency_checker` startup cost), DEP-01
+(nothing is pinned), SEC-03 (artifacts fetched from a mutable revision with only a size check),
+ERR-01 (bare and over-broad exception handling), and DOC-02 (remaining documentation drift).
+
+DEP-01 is the one with teeth: 27 of 28 dependencies are unpinned, so no build is reproducible.
+
+Fixes landed in four commits: `2be12c6` (critical), `d87f7ed` (high), `ff524ed` (regressions found
+by reviewing the first two), and the current commit. See the remediation log below.
 
 ### How to read this document
 
@@ -124,6 +129,38 @@ standing by those two commits; all resolved here.
 - **REG-06 (stale references):** Dead `generate_speech` imports across the three CLIs, its docstring
   still documenting the removed `lang`/`device` parameters, and a Chinese guide instruction pointing
   at the deleted `initialize_phonemizer`.
+
+### 2026-07-29 — Last High plus the highest-value Medium findings
+
+Phase 2 of the remediation plan ("make failures visible") plus the items flagged in the
+reconciliation pass above.
+
+- **DOC-01:** The README said "54 voices across 8 languages" in three places. `VOICE_FILES` holds 54
+  voices spanning nine language codes (`a b e f h i j p z`) — the README's own language list already
+  named nine. Closes the last High finding.
+- **UX-01 / UX-02:** The web UI has a Status box. Every handler reports through it: generation
+  reports segment count and format, or the exception type and message; truncation, the segment cap
+  and low-memory downgrades are surfaced as warnings alongside a successful result rather than only
+  on a console the remote user cannot see. A failed format conversion is now an error naming FFmpeg
+  instead of a silent `None`. Preset handlers return their messages to the Status box rather than
+  into the dropdown's value, and the load-preset error paths return `gr.update()` instead of `None`,
+  which is not a valid Slider value and used to send `speed=None` into the next generation.
+- **PERF-01:** Synthesis runs under `torch.no_grad()`, applied once inside
+  `EnhancedKPipeline.iter_speech` so all four call sites are covered. `no_grad` rather than
+  `inference_mode`: yielded tensors outlive the generator's scope, and inference tensors carry
+  escape restrictions that would surface as confusing errors when callers concatenate them. A
+  regression test asserts inference does not run with autograd enabled.
+- **SEC-05:** `speed` is validated against `MIN_SPEED`/`MAX_SPEED` server-side, with `NaN` rejected
+  explicitly since it fails both comparisons. The slider's bounds were only ever advisory.
+- **TEXT-01:** `normalize_chinese_text` preserves newlines, normalizing each line independently and
+  dropping blank ones. Collapsing them fed the whole input to the pipeline as a single chunk, where
+  it hit Kokoro's 510-token limit and was silently truncated.
+- **CHI-01:** The Chinese demo skips `None` phonemes instead of letting the join raise and discard a
+  complete, successful synthesis.
+- **L-11:** Removed the dead `os.environ["PYTHONIOENCODING"] = "utf-8"`; the interpreter reads that
+  variable only at startup. `console.py` (REG-01) does what it was reaching for.
+
+---
 
 ---
 
@@ -530,7 +567,7 @@ same process. `ensure_voices_directory()` additionally creates a stray empty `<c
 
 ---
 
-## DOC-01 🔴 OPEN · ✅ VERIFIED — "8 languages" is wrong; there are 9
+## DOC-01 🟢 RESOLVED · ✅ VERIFIED — "8 languages" is wrong; there are 9
 
 **Severity:** Medium · **Files:** `README.md:8`, `:322`, `:480`
 
@@ -723,7 +760,7 @@ uncaught `AttributeError`. `{"paths": "voices"}` produces a misleading "key not 
 > **Status:** the `config.py` half is gone with the file. `chinese_config._merge_config` is unchanged
 > and still merges arbitrary types with no schema check.
 
-## TEXT-01 🔴 OPEN · ⚠️ REPORTED — `normalize_chinese_text` destroys the newlines the splitter needs
+## TEXT-01 🟢 RESOLVED · ⚠️ REPORTED — `normalize_chinese_text` destroys the newlines the splitter needs
 
 **File:** `chinese_config.py:106-119`, consumed at `chinese_tts_demo.py:283`
 
@@ -740,7 +777,7 @@ Only checks `U+4E00–9FFF`. `is_chinese_text("日本語です")` → `True` (ka
 auto-routing sends Japanese to `zf_*` voices → Mandarin readings of Japanese kanji. Conversely misses
 Ext-A/Ext-B and fullwidth forms, warning "not Chinese" on legitimately Chinese input.
 
-## CHI-01 🔴 OPEN · ⚠️ REPORTED — Chinese demo discards good audio on `None` phonemes
+## CHI-01 🟢 RESOLVED · ⚠️ REPORTED — Chinese demo discards good audio on `None` phonemes
 
 **File:** `chinese_tts_demo.py:331`
 
@@ -756,7 +793,7 @@ success, then gets "生成失败" and **all audio is discarded**. `gradio_interf
 Model comes from `hexgrad/Kokoro-82M-v1.1-zh`; `config.json` comes from the v1.0 repo. If the configs
 diverge (vocab, istftnet params) the pipeline is configured for the wrong checkpoint.
 
-## UX-01 🔴 OPEN · ⚠️ REPORTED — Every Gradio failure returns `None`; the user sees nothing
+## UX-01 🟢 RESOLVED · ⚠️ REPORTED — Every Gradio failure returns `None`; the user sees nothing
 
 **File:** `gradio_interface.py:288-292`
 
@@ -766,7 +803,7 @@ blank audio player. A remote user (this is a network-shared UI) cannot distingui
 
 **Fix.** Return `(audio, status)` and render the status in a Textbox.
 
-## UX-02 🔴 OPEN · ⚠️ REPORTED — Preset handlers push plain strings into a Dropdown value
+## UX-02 🟢 RESOLVED · ⚠️ REPORTED — Preset handlers push plain strings into a Dropdown value
 
 **File:** `gradio_interface.py:388-390`, `:403-405`
 
@@ -795,7 +832,7 @@ pipeline warm-up and voice loading. On CPU a 9,000-character input (well under t
 at `:261`) exceeds 60 s on the first chunk → `break` → partial audio is saved and announced as
 `Audio saved to …`. The 300 s overall cap does the same.
 
-## PERF-01 🔴 OPEN · ⚠️ REPORTED — No `torch.inference_mode()` anywhere
+## PERF-01 🟢 RESOLVED · ⚠️ REPORTED — No `torch.inference_mode()` anywhere
 
 **Files:** `models.py:799-814`, `gradio_interface.py:233-253`, `tts_demo.py:321-358`,
 `chinese_tts_demo.py:308-322` (verified absent repo-wide by grep)
@@ -844,7 +881,7 @@ runs **before** the allow-list check at `:145-150`. A `format` of `"../../../../
 outside `outputs/`. Bounded (directory creation, not file write) and reachability depends on the Gradio
 version's `Radio.preprocess` validation — but it is defence you do not control.
 
-## SEC-05 🔴 OPEN · ⚠️ REPORTED — `speed` is not validated server-side
+## SEC-05 🟢 RESOLVED · ⚠️ REPORTED — `speed` is not validated server-side
 
 **File:** `gradio_interface.py:167`, `:233`
 
@@ -909,7 +946,7 @@ Grouped; each verified only as a count or by grep unless noted.
 | L-08 | espeak-ng's Mandarin code is `cmn`, not `zh` — the Chinese branch fails on most installs and is swallowed | `models.py:579` | 🟢 |
 | L-09 | `EnhancedKPipeline.load_voice` narrows its parent's contract (path-only, drops `delimiter`, keys by `stem`) — breaks blended voices and will break on a `kokoro` upgrade | `models.py:167-190` | 🔴 |
 | L-10 | Import-time side effects: `logging.basicConfig` ×3 hijacking the root logger, `signal.signal`, `atexit`, an espeak probe, two config singletons doing disk I/O | `models.py:17,313`, `gradio_interface.py:550-572` | 🟡 |
-| L-11 | `os.environ["PYTHONIOENCODING"] = "utf-8"` at import is a no-op — the interpreter reads it only at startup | `models.py:146` | 🔴 |
+| L-11 | `os.environ["PYTHONIOENCODING"] = "utf-8"` at import is a no-op — the interpreter reads it only at startup | `models.py:146` | 🟢 |
 | L-12 | `OFFLINE_MODE` frozen at import; setting `HF_HUB_OFFLINE` later has no effect | `models.py:151` | 🔴 |
 | L-13 | Empty/whitespace env vars: `KOKORO_BASE_DIR="   "` creates a directory literally named three spaces | `models.py:31-68` | 🔴 |
 | L-14 | 30 unused imports and dead locals (pyflakes-verified); `chinese_tts_demo.py:43` imports `TTSConfig` and never uses it | all modules | 🟡 |
@@ -934,13 +971,13 @@ Grouped; each verified only as a count or by grep unless noted.
 
 # Quick wins — all verified, under one hour total
 
-**9 of 10 done.** Only #3 remains, and it is a 3-minute edit.
+**All 10 done.**
 
 | # | Change | Time | Status |
 |---|---|---|---|
 | 1 | Correct the package license to Apache-2.0 in `pyproject.toml` | 2 min | 🟢 |
 | 2 | Make `environment:` a mapping so Docker Compose starts at all | 2 min | 🟢 |
-| 3 | Fix the language count — "8 languages" → 9, in three README locations | 3 min | 🔴 |
+| 3 | Fix the language count — "8 languages" → 9, in three README locations | 3 min | 🟢 |
 | 4 | Switch AAC to the `adts` muxer with explicit `codec="aac"` | 5 min | 🟢 |
 | 5 | Match "zh" against the filename, not the whole absolute path | 5 min | 🟢 |
 | 6 | Add a UUID suffix to generated output filenames | 5 min | 🟢 |
@@ -959,14 +996,14 @@ Status as of `ff524ed`. Phases 1, 3 and 8 are essentially complete; 2 has not be
 
 | # | Phase | Contains | Effort | Status |
 |---|---|---|---|---|
-| 1 | **Stop the bleeding** | All ten quick wins. Restores Docker, AAC and license correctness; removes the two silent mis-routings. | S | 🟡 9/10 — quick win #3 outstanding |
-| 2 | **Make failures visible** | Surface errors in the Gradio UI instead of returning `None` (UX-01); replace the 8 bare `except:`; stop `generate_speech` collapsing every failure into `(None, None)`. **Do this before the deeper fixes so you can see them work.** | M | 🔴 Not started — **now the highest-value remaining phase** |
+| 1 | **Stop the bleeding** | All ten quick wins. Restores Docker, AAC and license correctness; removes the two silent mis-routings. | S | 🟢 Done |
+| 2 | **Make failures visible** | Surface errors in the Gradio UI instead of returning `None` (UX-01); replace the 8 bare `except:`; stop `generate_speech` collapsing every failure into `(None, None)`. **Do this before the deeper fixes so you can see them work.** | M | 🟡 Web UI reports through a Status box (UX-01/UX-02); the bare `except:` clauses and `generate_speech`'s `(None, None)` remain (ERR-01) |
 | 3 | **Fix the model path** | CORE-01 and CORE-02 — plumb the checkpoint into `KPipeline`; rewrite Chinese setup to reuse `models.download_voice_files()`. | M | 🟢 Done |
 | 4 | **Durable state** | DATA-01 atomic writes + lock, applied to `speed_dial.py` and both config classes (identical bug, one helper). | S | 🟡 `speed_dial.py` done; `chinese_config.py` still writes non-atomically |
 | 5 | **Harden the deployment** | SEC-01 loopback publish + mandatory auth off-loopback; SEC-02 pin the action, gate on author association, drop `id-token`; commit a hash-pinned lock file (DEP-01). | M | 🟡 SEC-01/SEC-02 done; DEP-01 lock file outstanding |
 | 6 | **Add the missing net** | A real `pytest` suite plus a CI workflow. Start with the five areas from TEST-01 — each would have caught a verified finding above. Add `ruff` for the 30 dead imports. | L | 🟡 `unittest` suite + two-OS CI exist; no `ruff`, dead imports remain |
 | 7 | **Collapse the duplication** | Delete or fully adopt `config.py`; make `ChineseTTSConfig` subclass `TTSConfig`; one `get_voices_dir()` everywhere; extract shared CLI scaffolding. Roughly −500 LOC. | L | 🟡 `config.py` deleted and paths unified via `paths.py`; CLI scaffolding still duplicated |
-| 8 | **Concurrency model** | Per-language pipeline cache with eviction; network I/O outside the global lock; per-pipeline lock held across generation; drain-aware idempotent shutdown; `torch.inference_mode()` at all four generation sites. | XL | 🟡 Done except `torch.inference_mode()` (PERF-01) and cache eviction |
+| 8 | **Concurrency model** | Per-language pipeline cache with eviction; network I/O outside the global lock; per-pipeline lock held across generation; drain-aware idempotent shutdown; `torch.inference_mode()` at all four generation sites. | XL | 🟡 Done except cache eviction — pipelines are cached for process lifetime and never evicted |
 
 ### One structural note
 
@@ -984,14 +1021,17 @@ close it. The refactor was right; its blast radius was one step larger than the 
 
 ### Suggested next steps
 
-1. Quick win #3 (3 min) — closes the last High.
-2. Phase 2, "make failures visible" — still untouched and still the prerequisite for trusting
-   anything else. UX-01 alone means a remote user cannot tell a missing ffmpeg from a slow request.
-3. PERF-01 `torch.inference_mode()` — one decorator at each generation site, and the only remaining
-   item from the otherwise-complete concurrency phase.
-4. Delete the dead `os.environ["PYTHONIOENCODING"] = "utf-8"` at `models.py:85` (L-11). It has never
-   done anything — the interpreter reads that variable only at startup — and now sits next to
-   `console.py`, which solves the problem it was reaching for.
+1. **DEP-01 — pin the dependencies.** 27 of 28 are unconstrained, so no two builds are alike and the
+   Gradio-version-dependent findings cannot be settled. `pip-compile --generate-hashes`, commit the
+   lock, install with `--require-hashes`. This also unblocks judging SEC-04 and UX-02 reachability.
+2. **ERR-01 — the rest of phase 2.** The UI now reports failures, but 8 bare `except:` clauses still
+   swallow `KeyboardInterrupt`/`SystemExit`, and `generate_speech` still collapses every failure into
+   `(None, None)` including genuine programming errors.
+3. **CLI-01 — do not delete the previous output before the new audio validates.** A failed run
+   currently leaves the user with no `output.wav` at all.
+4. **The `chinese_config.py` cluster** (CFG-02, CFG-04, TEXT-02). Lower stakes than the above now
+   that TEXT-01 is fixed, but it is the last module no remediation pass has restructured.
+
 
 ---
 

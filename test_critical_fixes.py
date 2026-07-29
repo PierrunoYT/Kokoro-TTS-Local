@@ -17,6 +17,27 @@ SRC = Path(__file__).parent / "src"
 sys.path.insert(0, str(SRC))
 
 from kokoro_tts_local import console, setup_chinese_tts, speed_dial
+from kokoro_tts_local.chinese_config import ChineseTextProcessor
+
+
+class ChineseTextNormalizationTests(unittest.TestCase):
+    def test_newlines_survive_normalization(self):
+        """Every synthesis path splits on r'\\n+'; collapsing them truncates."""
+        normalize = ChineseTextProcessor.normalize_chinese_text
+
+        text = "第一段。\n\n第二段。\n第三段。"
+        self.assertEqual(normalize(text).count("\n"), 2)
+        self.assertEqual(
+            normalize(text).split("\n"),
+            ["第一段。", "第二段。", "第三段。"],
+        )
+
+        # Intra-line whitespace still collapses, and blank lines do not
+        # survive as empty segments.
+        self.assertEqual(normalize("你好   世界\n\n\n  再见  "), "你好 世界\n再见")
+        # Punctuation spacing still applies, per line.
+        self.assertEqual(normalize("你好，世界\n再见"), "你好， 世界\n再见")
+        self.assertEqual(normalize("   "), "")
 
 
 class ConsoleEncodingTests(unittest.TestCase):
@@ -249,11 +270,24 @@ class ConcurrencyLifecycleTests(unittest.TestCase):
             def to(self, device):
                 return self
 
+        # Records whether inference actually ran with gradients disabled.
+        grad_disabled = []
+
+        class FakeNoGrad:
+            def __enter__(self):
+                grad_disabled.append(True)
+                return self
+
+            def __exit__(self, *exc):
+                grad_disabled.pop()
+                return False
+
         fake_torch = types.ModuleType("torch")
         fake_torch.Tensor = FakeTensor
         fake_torch.load = mock.Mock(return_value=FakeTensor())
         fake_torch.from_numpy = lambda value: FakeTensor()
         fake_torch.cat = lambda values, dim=0: FakeTensor()
+        fake_torch.no_grad = FakeNoGrad
         fake_numpy = types.ModuleType("numpy")
         fake_numpy.ndarray = type("ndarray", (), {})
 
@@ -276,6 +310,7 @@ class ConcurrencyLifecycleTests(unittest.TestCase):
 
             def __call__(self, *args, **kwargs):
                 nonlocal active, max_active
+                assert grad_disabled, "inference ran with autograd enabled"
                 with active_lock:
                     active += 1
                     max_active = max(max_active, active)

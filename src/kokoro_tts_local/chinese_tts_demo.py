@@ -323,7 +323,12 @@ def generate_chinese_speech(
                         if isinstance(audio, torch.Tensor):
                             audio = audio.detach().cpu().numpy()
                         audio_segments.append(audio)
-                        all_phonemes.append(ps)
+                        # Guard against None: a single segment without
+                        # phonemes would make the join below raise, and the
+                        # broad handler would then discard a complete,
+                        # successful synthesis.
+                        if ps:
+                            all_phonemes.append(ps)
                         logger.info(f"生成了句段: {gs} (Generated segment: {gs})")
 
             # Concatenate all audio segments
