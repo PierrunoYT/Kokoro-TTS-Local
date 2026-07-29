@@ -77,6 +77,16 @@ pip install -r requirements.txt
 python -m unidic download
 ```
 
+**Install as a pip package (optional):**
+Instead of running the scripts from the repo directly, you can install this project itself as a package (editable install recommended while developing):
+```bash
+pip install -e .
+```
+This installs the dependencies from `pyproject.toml` and adds three console commands to your virtual environment, equivalent to running the corresponding script directly:
+- `kokoro-tts` — command-line interface (same as `python tts_demo.py`)
+- `kokoro-tts-web` — Gradio web interface (same as `python gradio_interface.py`)
+- `kokoro-tts-chinese` — Mandarin-focused CLI (same as `python chinese_tts_demo.py`)
+
 **Alternative Installation (Simplified):**
 For a simpler setup, you can also install the official Kokoro package directly:
 ```bash

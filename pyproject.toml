@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kokoro-tts-local"
+version = "0.1.0"
+description = "Local text-to-speech generation using the Kokoro-82M model, with CLI and Gradio web interfaces"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10,<3.13"
+authors = [
+    { name = "PierrunoYT" },
+]
+dependencies = [
+    "kokoro",
+    "misaki",
+    "torch",
+    "torchaudio",
+    "soundfile",
+    "huggingface-hub",
+    "gradio",
+    "pydub",
+    "espeakng-loader",
+    "phonemizer-fork",
+    "wheel",
+    "setuptools",
+    "maturin",
+    "num2words",
+    "spacy",
+    "tqdm",
+    "psutil",
+    "packaging",
+    "numpy<2.0",
+    "underthesea",
+    "fugashi[unidic]",
+    "jaconv",
+    "mojimoji",
+    "pyopenjtalk",
+    "jamo",
+    "nltk",
+    "cn2an",
+    "jieba",
+    "ordered-set",
+    "pypinyin",
+    "pypinyin-dict",
+]
+
+[project.urls]
+Homepage = "https://github.com/PierrunoYT/Kokoro-TTS-Local"
+Issues = "https://github.com/PierrunoYT/Kokoro-TTS-Local/issues"
+
+[project.scripts]
+kokoro-tts = "tts_demo:main"
+kokoro-tts-web = "gradio_interface:main"
+kokoro-tts-chinese = "chinese_tts_demo:main"
+
+[tool.setuptools]
+py-modules = [
+    "models",
+    "config",
+    "chinese_config",
+    "tts_demo",
+    "gradio_interface",
+    "chinese_tts_demo",
+    "dependency_checker",
+    "speed_dial",
+    "setup_chinese_tts",
+]

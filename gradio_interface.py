@@ -606,7 +606,7 @@ def parse_arguments():
     )
     return parser.parse_args()
 
-if __name__ == "__main__":
+def main() -> None:
     try:
         args = parse_arguments()
         auth = None
@@ -619,3 +619,6 @@ if __name__ == "__main__":
     finally:
         # Ensure cleanup even if Gradio encounters an error
         cleanup_resources()
+
+if __name__ == "__main__":
+    main()
