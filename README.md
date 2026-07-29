@@ -203,6 +203,31 @@ The script checks:
 
 For detailed offline usage instructions, set `HF_HUB_OFFLINE=1` before running and use `test_offline.py` to verify your setup.
 
+## Configuring File Locations
+
+By default, Kokoro-TTS-Local looks for the model, config, and voice files relative to the current working directory (e.g. `./kokoro-v1_0.pth`, `./config.json`, `./voices/`). If you're integrating this project as a dependency or simply want the files stored elsewhere, you can override these locations with environment variables:
+
+| Environment Variable | Description | Default |
+|---|---|---|
+| `KOKORO_BASE_DIR` | Base directory used to resolve the model, config, and voices locations below (unless individually overridden). | Current working directory |
+| `KOKORO_MODEL_DIR` | Directory to look for/download the model (`.pth`) and `config.json` files. | `KOKORO_BASE_DIR` |
+| `KOKORO_VOICES_DIR` | Directory to look for/download voice (`.pt`) files. | `KOKORO_BASE_DIR/voices` |
+| `KOKORO_CONFIG_PATH` | Full path to `config.json`. | `KOKORO_MODEL_DIR/config.json` |
+
+**Linux/macOS:**
+```bash
+export KOKORO_BASE_DIR="$HOME/.local/share/kokoro-tts"
+python tts_demo.py
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:KOKORO_BASE_DIR = "$HOME\.kokoro-tts"
+python tts_demo.py
+```
+
+Explicit `model_path` arguments passed to `build_model()` are still resolved relative to the current working directory, so existing scripts continue to work unchanged.
+
 ## Usage
 
 You can use either the command-line interface or the web interface:
