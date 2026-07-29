@@ -11,6 +11,7 @@ Usage:
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 import logging
 from typing import List, Tuple
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 CHINESE_MODEL_FILE = "kokoro-v1_1-zh.pth"
-CONFIG_FILE = "config.json"
+CONFIG_FILE = "config-v1_1-zh.json"
 VOICES_DIR = Path("voices").resolve()
 
 CHINESE_VOICES = [
@@ -152,17 +153,24 @@ def download_config() -> bool:
         print(f"✓ 配置文件已存在 (Config already exists): {config_path}")
         return True
     
-    # Download
-    success = download_file(
-        "hexgrad/Kokoro-82M",
-        CONFIG_FILE,
-        local_dir="."
-    )
-    
-    if success and config_path.exists():
+    try:
+        from huggingface_hub import hf_hub_download
+
+        with tempfile.TemporaryDirectory(dir=config_path.parent) as temp_dir:
+            downloaded_config = hf_hub_download(
+                repo_id="hexgrad/Kokoro-82M-v1.1-zh",
+                filename="config.json",
+                local_dir=temp_dir,
+                force_download=False
+            )
+            if Path(downloaded_config).stat().st_size == 0:
+                raise ValueError("Downloaded config file is empty")
+            os.replace(downloaded_config, config_path)
+
         print(f"✓ 配置文件已下载 (Config downloaded)\n")
         return True
-    else:
+    except Exception as e:
+        print(f"  ✗ 错误 (Error): {e}")
         print(f"✗ 配置文件下载失败 (Config download failed)\n")
         return False
 
@@ -186,7 +194,7 @@ def download_voices() -> Tuple[int, int]:
         voice_path = VOICES_DIR / voice_file
         
         # Check if already exists
-        if voice_path.exists():
+        if voice_path.exists() and voice_path.stat().st_size > 0:
             size_mb = voice_path.stat().st_size / (1024 * 1024)
             print(f"✓ {voice_file} ({size_mb:.1f} MB)")
             successful += 1
@@ -198,14 +206,21 @@ def download_voices() -> Tuple[int, int]:
             
             print(f"下载 (Downloading): {voice_file}...")
             
-            downloaded_path = hf_hub_download(
-                repo_id="hexgrad/Kokoro-82M",
-                filename=f"voices/{voice_file}",
-                local_dir=str(VOICES_DIR),
-                force_download=False
-            )
+            # Hugging Face preserves the repository's ``voices/`` prefix
+            # under local_dir. Download to a temporary directory, then move
+            # the file to the flat directory expected by the application.
+            with tempfile.TemporaryDirectory(dir=VOICES_DIR) as temp_dir:
+                downloaded_path = hf_hub_download(
+                    repo_id="hexgrad/Kokoro-82M",
+                    filename=f"voices/{voice_file}",
+                    local_dir=temp_dir,
+                    force_download=False
+                )
+                if Path(downloaded_path).stat().st_size == 0:
+                    raise ValueError(f"Downloaded voice file is empty: {voice_file}")
+                os.replace(downloaded_path, voice_path)
             
-            size_mb = Path(downloaded_path).stat().st_size / (1024 * 1024)
+            size_mb = voice_path.stat().st_size / (1024 * 1024)
             print(f"  ✓ 完成 (Done): {voice_file} ({size_mb:.1f} MB)")
             successful += 1
             
@@ -327,4 +342,3 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
-

@@ -1,7 +1,7 @@
 """Models module for Kokoro TTS Local"""
 from typing import Optional, Tuple, List
 import torch
-from kokoro import KPipeline
+from kokoro import KModel, KPipeline
 import os
 import json
 import re
@@ -9,6 +9,7 @@ import contextlib
 from pathlib import Path
 import numpy as np
 import shutil
+import tempfile
 import threading
 import warnings
 import logging
@@ -56,16 +57,18 @@ def get_model_dir() -> Path:
     return get_base_dir()
 
 
-def get_config_path() -> Path:
+def get_config_path(is_chinese_model: bool = False) -> Path:
     """Return the path to ``config.json``.
 
     Overridable via the ``KOKORO_CONFIG_PATH`` environment variable
-    (path to the file itself). Defaults to ``<model_dir>/config.json``.
+    (path to the file itself). Chinese and default models otherwise use
+    separate files so each checkpoint is paired with its repository config.
     """
     config_path = os.environ.get("KOKORO_CONFIG_PATH")
     if config_path:
         return Path(config_path).resolve()
-    return (get_model_dir() / "config.json").resolve()
+    filename = "config-v1_1-zh.json" if is_chinese_model else "config.json"
+    return (get_model_dir() / filename).resolve()
 
 
 def get_safe_voice_path(voice_name: str) -> Path:
@@ -158,9 +161,20 @@ if OFFLINE_MODE:
 class EnhancedKPipeline(KPipeline):
     """Enhanced KPipeline with improved voice loading and error handling"""
 
-    def __init__(self, lang_code: str = 'a', model: bool = True):
-        super().__init__(lang_code=lang_code, model=model)
-        self.device = 'cpu'  # Default device
+    def __init__(
+        self,
+        lang_code: str = 'a',
+        model=True,
+        repo_id: Optional[str] = None,
+        device: str = 'cpu'
+    ):
+        super().__init__(
+            lang_code=lang_code,
+            model=model,
+            repo_id=repo_id,
+            device=device
+        )
+        self.device = device
         if not hasattr(self, 'voices'):
             self.voices = {}
 
@@ -495,15 +509,17 @@ def build_model(
 
     # Use a lock for thread safety
     with _pipeline_lock:
-        # Don't reuse pipeline if language code is different
-        # (each language may need different configuration)
-        if _pipeline is not None and hasattr(_pipeline, 'lang_code') and _pipeline.lang_code == lang_code:
-            _pipeline.device = device
-            return _pipeline
-
         try:
             # Determine if this is a Chinese model
-            is_chinese_model = lang_code == 'z' or (model_path and 'zh' in str(model_path).lower())
+            is_chinese_model = bool(
+                lang_code == 'z'
+                or (model_path is not None and 'zh' in Path(model_path).name.lower())
+            )
+            model_repo_id = (
+                "hexgrad/Kokoro-82M-v1.1-zh"
+                if is_chinese_model
+                else "hexgrad/Kokoro-82M"
+            )
 
             # Directory used for locating/downloading the model and config
             # files. Overridable via KOKORO_MODEL_DIR (see get_model_dir()).
@@ -518,6 +534,21 @@ def build_model(
                 # working directory, preserving prior behavior.
                 model_path = os.path.abspath(model_path)
 
+            config_path = str(get_config_path(is_chinese_model))
+
+            # A cache hit is valid only for the same concrete checkpoint and
+            # runtime settings. In particular, do not silently discard an
+            # explicit fine-tune merely because its language code matches.
+            if (
+                _pipeline is not None
+                and getattr(_pipeline, 'lang_code', None) == lang_code
+                and getattr(_pipeline, '_model_path', None) == model_path
+                and getattr(_pipeline, '_config_path', None) == config_path
+                and getattr(_pipeline, '_repo_version', None) == repo_version
+                and getattr(_pipeline, 'device', None) == device
+            ):
+                return _pipeline
+
             if not os.path.exists(model_path):
                 if OFFLINE_MODE:
                     error_msg = f"Model file {model_path} not found and running in OFFLINE mode. Please download the model first with network connection."
@@ -530,8 +561,6 @@ def build_model(
 
                     # Determine filename and repo for download
                     filename = 'kokoro-v1_1-zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
-                    model_repo_id = "hexgrad/Kokoro-82M-v1.1-zh" if is_chinese_model else "hexgrad/Kokoro-82M"
-
                     model_dir.mkdir(parents=True, exist_ok=True)
                     model_path = hf_hub_download(
                         repo_id=model_repo_id,
@@ -548,7 +577,6 @@ def build_model(
 
             # Download config if it doesn't exist. Overridable via
             # KOKORO_CONFIG_PATH (see get_config_path()).
-            config_path = str(get_config_path())
             if not os.path.exists(config_path):
                 if OFFLINE_MODE:
                     error_msg = f"Config file {config_path} not found and running in OFFLINE mode. Please download the config first with network connection."
@@ -558,15 +586,20 @@ def build_model(
                 logger.info("Downloading config file...")
                 try:
                     from huggingface_hub import hf_hub_download
-                    model_dir.mkdir(parents=True, exist_ok=True)
-                    config_path = hf_hub_download(
-                        repo_id="hexgrad/Kokoro-82M",
-                        filename="config.json",
-                        local_dir=str(model_dir),
-                        force_download=False,
-                        revision=repo_version,
-                        local_files_only=OFFLINE_MODE
-                    )
+                    config_parent = Path(config_path).parent
+                    config_parent.mkdir(parents=True, exist_ok=True)
+                    with tempfile.TemporaryDirectory(dir=config_parent) as temp_dir:
+                        downloaded_config = hf_hub_download(
+                            repo_id=model_repo_id,
+                            filename="config.json",
+                            local_dir=temp_dir,
+                            force_download=False,
+                            revision=repo_version,
+                            local_files_only=OFFLINE_MODE
+                        )
+                        if os.path.getsize(downloaded_config) == 0:
+                            raise ValueError("Downloaded config file is empty")
+                        os.replace(downloaded_config, config_path)
                     logger.info(f"Config downloaded to {config_path}")
                 except Exception as e:
                     logger.error(f"Error downloading config: {e}")
@@ -600,14 +633,26 @@ def build_model(
                 logger.info(f"Supported language codes: {', '.join(supported_codes)}")
                 lang_code = 'a'
 
-            # Initialize pipeline with validated language code.
+            # Initialize the concrete model and pass it to the pipeline.
+            # KPipeline(model=True) would ignore model_path and load its own
+            # repository default checkpoint instead.
             # KPipeline internally calls json.load on config.json; some upstream
             # configs contain a UTF-8 BOM which the standard json.load cannot
             # handle. We temporarily swap json.load only inside this block so
             # other libraries are unaffected. _pipeline_lock is already held
             # by the caller, serialising the global mutation.
             with _patched_json_load():
-                pipeline_instance = EnhancedKPipeline(lang_code=lang_code)
+                kokoro_model = KModel(
+                    repo_id=model_repo_id,
+                    config=config_path,
+                    model=model_path
+                ).to(device).eval()
+                pipeline_instance = EnhancedKPipeline(
+                    lang_code=lang_code,
+                    model=kokoro_model,
+                    repo_id=model_repo_id,
+                    device=device
+                )
 
             if pipeline_instance is None:
                 raise ValueError("Failed to initialize EnhancedKPipeline - pipeline is None")
@@ -615,6 +660,9 @@ def build_model(
             # Store language code and device
             pipeline_instance.lang_code = lang_code
             pipeline_instance.device = device
+            pipeline_instance._model_path = model_path
+            pipeline_instance._config_path = config_path
+            pipeline_instance._repo_version = repo_version
 
             # Try to load the first available voice with improved error handling
             voice_loaded = False

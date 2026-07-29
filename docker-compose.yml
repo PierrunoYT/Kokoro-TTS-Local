@@ -7,8 +7,8 @@ services:
     ports:
       - "7860:7860"
     environment:
-      # Uncomment the line below to run fully offline after initial model download
-      # - HF_HUB_OFFLINE=1
+      # Set HF_HUB_OFFLINE=1 after the initial model download to run offline.
+      HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-0}"
     volumes:
       - ./outputs:/app/outputs
       - ./voices:/app/voices

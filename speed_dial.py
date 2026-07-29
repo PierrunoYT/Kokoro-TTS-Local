@@ -12,47 +12,87 @@ This module provides functions to:
 
 import json
 import os
+import tempfile
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 # Define the path for the speed dial presets file
 SPEED_DIAL_FILE = Path("speed_dial.json")
 
-def load_presets() -> Dict[str, Dict[str, Any]]:
-    """
-    Load speed dial presets from the JSON file.
-    
-    Returns:
-        Dictionary of presets where keys are preset names and values are preset data
-    """
+_presets_lock = threading.RLock()
+
+
+def _load_presets(strict: bool = False) -> Dict[str, Dict[str, Any]]:
+    """Load and validate presets, optionally propagating read errors."""
     if not SPEED_DIAL_FILE.exists():
-        # If file doesn't exist, return an empty dictionary
         return {}
-    
+
     try:
         with open(SPEED_DIAL_FILE, 'r', encoding='utf-8') as f:
             presets = json.load(f)
 
         if not isinstance(presets, dict):
-            print(
-                "Error loading speed dial presets: "
-                f"expected a JSON object, got {type(presets).__name__}"
+            raise ValueError(
+                "expected a JSON object, "
+                f"got {type(presets).__name__}"
             )
-            return {}
-        
-        # Validate the loaded presets
+
         validated_presets = {}
         for name, preset in presets.items():
             if not isinstance(name, str) or not isinstance(preset, dict):
+                if strict:
+                    raise ValueError(f"invalid preset entry: {name!r}")
                 print(f"Skipping invalid preset entry: {name!r}")
                 continue
             if validate_preset(preset):
                 validated_presets[name] = preset
-        
+            elif strict:
+                raise ValueError(f"invalid preset data: {name!r}")
         return validated_presets
-    except (json.JSONDecodeError, IOError) as e:
+    except (json.JSONDecodeError, OSError, ValueError) as e:
         print(f"Error loading speed dial presets: {e}")
+        if strict:
+            raise
         return {}
+
+
+def _atomic_write_presets(presets: Dict[str, Dict[str, Any]]) -> bool:
+    """Durably replace the presets file without exposing partial JSON."""
+    parent = SPEED_DIAL_FILE.parent
+    temp_path = None
+    try:
+        fd, temp_name = tempfile.mkstemp(
+            dir=str(parent),
+            prefix=".speed_dial.",
+            suffix=".tmp"
+        )
+        temp_path = Path(temp_name)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(presets, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, SPEED_DIAL_FILE)
+        return True
+    except (OSError, TypeError, ValueError) as e:
+        print(f"Error writing speed dial presets: {e}")
+        return False
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+
+def load_presets() -> Dict[str, Dict[str, Any]]:
+    """
+    Load speed dial presets from the JSON file.
+
+    Returns:
+        Dictionary of presets where keys are preset names and values are preset data
+    """
+    with _presets_lock:
+        return _load_presets()
 
 def save_preset(name: str, voice: str, text: str, format: str = "wav", speed: float = 1.0) -> bool:
     """
@@ -96,20 +136,14 @@ def save_preset(name: str, voice: str, text: str, format: str = "wav", speed: fl
     if not validate_preset(preset):
         return False
     
-    # Load existing presets
-    presets = load_presets()
-    
-    # Add or update the preset
-    presets[name] = preset
-    
-    # Save presets to file
-    try:
-        with open(SPEED_DIAL_FILE, 'w', encoding='utf-8') as f:
-            json.dump(presets, f, indent=2, ensure_ascii=False)
-        return True
-    except IOError as e:
-        print(f"Error saving speed dial preset: {e}")
-        return False
+    with _presets_lock:
+        try:
+            presets = _load_presets(strict=True)
+        except (json.JSONDecodeError, OSError, ValueError):
+            return False
+
+        presets[name] = preset
+        return _atomic_write_presets(presets)
 
 def delete_preset(name: str) -> bool:
     """
@@ -121,24 +155,17 @@ def delete_preset(name: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    # Load existing presets
-    presets = load_presets()
-    
-    # Check if preset exists
-    if name not in presets:
-        return False
-    
-    # Remove the preset
-    del presets[name]
-    
-    # Save presets to file
-    try:
-        with open(SPEED_DIAL_FILE, 'w', encoding='utf-8') as f:
-            json.dump(presets, f, indent=2, ensure_ascii=False)
-        return True
-    except IOError as e:
-        print(f"Error deleting speed dial preset: {e}")
-        return False
+    with _presets_lock:
+        try:
+            presets = _load_presets(strict=True)
+        except (json.JSONDecodeError, OSError, ValueError):
+            return False
+
+        if name not in presets:
+            return False
+
+        del presets[name]
+        return _atomic_write_presets(presets)
 
 def validate_preset(preset: Dict[str, Any]) -> bool:
     """

@@ -290,7 +290,7 @@ def main() -> None:
                 if getattr(model, 'lang_code', None) != lang_code:
                     print(f"Switching pipeline to language '{lang_code}'...")
                     try:
-                        model = build_model(DEFAULT_MODEL_PATH, device, lang_code=lang_code)
+                        model = build_model(None, device, lang_code=lang_code)
                     except Exception as e:
                         print(f"Error switching language pipeline: {type(e).__name__}: {e}")
                         continue

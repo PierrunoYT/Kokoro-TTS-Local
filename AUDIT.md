@@ -25,6 +25,20 @@ claim depending on `KPipeline` internals (including whether its internal `torch.
 `weights_only=True`) is inferred from in-repo evidence, not observed. Reachability of a few Gradio
 input-validation findings depends on the installed Gradio major version, likewise unpinned.
 
+## Remediation log
+
+### 2026-07-29 — Critical findings resolved
+
+- **CORE-01:** `build_model()` now constructs `KModel` from the resolved checkpoint and matching
+  repository config and passes that concrete model to `KPipeline`. English and Chinese configs are
+  stored separately. Cache reuse includes checkpoint, config, repository revision, and device, so
+  explicit fine-tunes are not discarded on a language-only cache hit.
+- **CORE-02:** Chinese voices download into a temporary directory and are moved into the flat
+  `voices/` directory that setup verification and the demos consume.
+- **DEPLOY-01:** Compose now provides a valid `environment` mapping and supports `HF_HUB_OFFLINE`.
+- **DATA-01:** Speed-dial mutations are protected by a process lock and use fsynced temporary files plus
+  atomic replacement. Corrupt JSON now aborts mutations instead of being treated as an empty preset set.
+
 ---
 
 ## Executive summary
