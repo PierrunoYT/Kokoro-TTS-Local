@@ -20,30 +20,6 @@ A local implementation of the Kokoro Text-to-Speech model, featuring dynamic mod
 - Memory management and optimization
 - Thread-safe operations for multi-user scenarios
 
-## Recent Improvements
-
-This project has been significantly enhanced with security and code quality improvements:
-
-### 🔒 Security Enhancements
-- **Fixed critical security vulnerability** in model loading by using `weights_only=True` for `torch.load`
-- **Removed public exposure** of Gradio interface (`share=False`) to prevent accidental public access
-- **Added comprehensive input validation** for all user inputs with regex pattern matching
-- **Enhanced resource management** with proper cleanup and warning systems
-
-### 🛠️ Code Quality Improvements
-- **Replaced hardcoded values** with named constants for better maintainability
-- **Added comprehensive type hints** throughout the codebase for better IDE support and safety
-- **Enhanced thread safety** with proper locking mechanisms for concurrent operations
-- **Improved error handling** with specific error types and consistent messaging
-- **Added proper warning suppression** for model-related deprecation warnings
-
-### 📁 New Components
-- **`config.py`** - Centralized configuration management system
-- **`dependency_checker.py`** - Comprehensive dependency validation and CUDA detection
-- **`IMPROVEMENTS.md`** - Detailed documentation of all enhancements
-
-For complete details, see [`IMPROVEMENTS.md`](IMPROVEMENTS.md).
-
 ## Prerequisites
 
 - Python 3.10–3.12 (**Python 3.13+ is not supported** — core dependencies such as `misaki` and `numpy<2.0` do not provide packages for 3.13 yet)
@@ -481,7 +457,6 @@ The system includes 54 different voices across 8 languages:
 ├── README.md             # Project documentation
 ├── README_CHINESE_TTS.md # Chinese TTS quick reference
 ├── CHINESE_TTS_GUIDE.md  # Complete Chinese TTS guide
-├── IMPROVEMENTS.md       # Detailed improvement documentation
 ├── models.py             # Core TTS model implementation
 ├── gradio_interface.py   # Web interface implementation
 ├── tts_demo.py          # CLI implementation (English)
