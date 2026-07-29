@@ -35,6 +35,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Or use OAuth token instead:
           # claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          model: "claude-sonnet-5"
           timeout_minutes: "60"
           # Optional: Restrict network access to specific domains only
           # experimental_allowed_domains: |
