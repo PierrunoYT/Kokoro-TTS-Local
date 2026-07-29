@@ -1,10 +1,11 @@
 # Codebase Audit — Kokoro-TTS-Local
 
-**Date:** 2026-07-29 · **Commit:** `a423e0f` (master) · **Scope:** 10 Python modules (~4,146 LOC), packaging, Docker, CI
+**Audited:** 2026-07-29 · **Audited commit:** `a423e0f` (master) · **Scope:** 10 Python modules
+(~4,146 LOC), packaging, Docker, CI
 
 Six parallel review agents swept the tree across security, core correctness, UI/CLI correctness,
 concurrency/performance, architecture, and dependencies/testing/docs/CI.
-**~170 raw findings, ~145 after deduplication.** Health score: **42/100**.
+**~170 raw findings, ~145 after deduplication.** Health score at audit time: **42/100**.
 
 | Severity | Count |
 |---|---|
@@ -13,10 +14,38 @@ concurrency/performance, architecture, and dependencies/testing/docs/CI.
 | Medium | ~55 |
 | Low | ~65 |
 
+## Current status — last reconciled 2026-07-29 against `ff524ed`
+
+The finding bodies below describe the code **as audited at `a423e0f`** and are kept unedited as the
+historical record — their line numbers and file paths predate the `src/` layout move. Each finding
+carries a status marker reflecting the current tree:
+
+- **🟢 RESOLVED** — re-verified fixed against the current source.
+- **🔴 OPEN** — re-verified still present.
+- **🟡 PARTIAL** — some sub-claims fixed, others still present; the marker says which.
+- **⚪ OBSOLETE** — the code the finding described no longer exists (e.g. `config.py` was deleted).
+- **◻️ NOT RE-VERIFIED** — not re-checked in this reconciliation pass. Status unknown, not "fine".
+
+| Severity | Resolved | Open / Partial | Obsolete | Not re-verified |
+|---|---|---|---|---|
+| Critical (4 detailed) | 4 | 0 | 0 | 0 |
+| High (15 detailed) | 14 | 1 (DOC-01) | 0 | 0 |
+| Medium (21 detailed) | 4 | 16 | 1 | 0 |
+| Low (30 tabulated) | 5 | 17 | 0 | 8 |
+
+**The critical and high tier is closed except DOC-01**, a three-line README correction that is the
+oldest untouched item in the report — the README still says "8 languages" in three places while
+`VOICE_PREFIX_TO_LANGUAGE_CODE` maps nine. The medium tier is largely untouched: the remaining
+sixteen are concentrated in `chinese_config.py` (config/text handling), the Gradio UX error paths,
+and dependency pinning — none of which any remediation commit has reached yet.
+
+Fixes landed in three commits: `2be12c6` (critical), `d87f7ed` (high), `ff524ed` (regressions found
+by reviewing the first two). See the remediation log below.
+
 ### How to read this document
 
-- **✅ VERIFIED** — confirmed directly against source, by parsing the file, or by running the failing
-  command. 13 findings. Treat as fact.
+- **✅ VERIFIED** — at audit time, confirmed directly against source, by parsing the file, or by
+  running the failing command. 13 findings. Treat as fact.
 - **⚠️ REPORTED** — agent-reported and spot-checked but not individually re-derived. Strong leads,
   not settled facts. Confirm before acting.
 
@@ -100,6 +129,9 @@ standing by those two commits; all resolved here.
 
 ## Executive summary
 
+*Written at audit time against `a423e0f`. Retained as the original assessment; see the status block
+above for what has since been fixed.*
+
 The security posture at the application layer is better than expected. The correctness posture is worse.
 
 **The single most consequential finding:** `build_model()` resolves, downloads and validates a model
@@ -119,28 +151,45 @@ threaded correctly through every download; the container runs as non-root; there
 or unsafe deserialization in the repo's own code. The problem is not carelessness — it is the absence
 of any test or CI that would have caught the silent failures.
 
+### Postscript — 2026-07-29, after remediation
+
+Every one of the "silently discarded work" instances above is now fixed, and the missing net exists:
+five dependency-free regression tests run on Linux and Windows in CI.
+
+The remediation itself proved the thesis. Reviewing the two fix commits turned up six new defects
+**introduced by the fixes** (REG-01…REG-06) — a suite that could not run on Windows at all, a lock
+widened until it serialized a thread pool, an inference lock that outlived its generator, and a
+`ValueError` promoted into a code path that enumerates a user-writable directory. Three of the six
+trace to a fix that was correct in isolation and wrong in context.
+
+What remains open is qualitatively different from what was closed: no remaining finding silently
+produces wrong output. They are unpinned dependencies, un-surfaced UI errors, and text-handling bugs
+in the Chinese config module, which no remediation commit has touched.
+
 ---
 
 ## Top 10 by impact
 
-| # | Issue | Location | Sev | Effort |
-|---|---|---|---|---|
-| 1 | Downloaded checkpoint never reaches the pipeline | `models.py:610` | Critical | M |
-| 2 | Chinese setup downloads to `voices/voices/` | `setup_chinese_tts.py:201` | Critical | S |
-| 3 | `docker compose` fails to start | `docker-compose.yml:9` | Critical | S |
-| 4 | Speed-dial preset data loss | `speed_dial.py:107` | Critical | S |
-| 5 | Concurrent users overwrite each other's audio | `gradio_interface.py:217` | High | S |
-| 6 | Any path containing "zh" switches to the Chinese model | `models.py:506` | High | S |
-| 7 | Docker publishes an unauthenticated UI on `0.0.0.0` | `Dockerfile:43` | High | S |
-| 8 | CI: unpinned `@beta` action, any-user trigger, `id-token: write` | `claude.yml:15-33` | High | S |
-| 9 | AAC export always fails | `gradio_interface.py:147` | High | S |
-| 10 | Package declares MIT; repo is Apache-2.0 | `pyproject.toml:10` | High | S |
+Status as of `ff524ed`. Locations are as-audited (`a423e0f`), before the `src/` layout move.
+
+| # | Issue | Location | Sev | Effort | Status |
+|---|---|---|---|---|---|
+| 1 | Downloaded checkpoint never reaches the pipeline | `models.py:610` | Critical | M | 🟢 CORE-01 |
+| 2 | Chinese setup downloads to `voices/voices/` | `setup_chinese_tts.py:201` | Critical | S | 🟢 CORE-02 |
+| 3 | `docker compose` fails to start | `docker-compose.yml:9` | Critical | S | 🟢 DEPLOY-01 |
+| 4 | Speed-dial preset data loss | `speed_dial.py:107` | Critical | S | 🟢 DATA-01 |
+| 5 | Concurrent users overwrite each other's audio | `gradio_interface.py:217` | High | S | 🟢 CONC-01 |
+| 6 | Any path containing "zh" switches to the Chinese model | `models.py:506` | High | S | 🟢 CORE-03 |
+| 7 | Docker publishes an unauthenticated UI on `0.0.0.0` | `Dockerfile:43` | High | S | 🟢 SEC-01 |
+| 8 | CI: unpinned `@beta` action, any-user trigger, `id-token: write` | `claude.yml:15-33` | High | S | 🟢 SEC-02 |
+| 9 | AAC export always fails | `gradio_interface.py:147` | High | S | 🟢 FMT-01 |
+| 10 | Package declares MIT; repo is Apache-2.0 | `pyproject.toml:10` | High | S | 🟢 LEGAL-01 |
 
 ---
 
 # Critical
 
-## CORE-01 ✅ VERIFIED — The downloaded model checkpoint is never used
+## CORE-01 🟢 RESOLVED · ✅ VERIFIED — The downloaded model checkpoint is never used
 
 **Severity:** Critical · **Files:** `models.py:477-655`, construction at `:610`
 
@@ -176,7 +225,7 @@ pipeline_instance = EnhancedKPipeline(lang_code=lang_code, repo_id=repo_id)
 
 ---
 
-## CORE-02 ✅ VERIFIED — Chinese setup downloads every voice into `voices/voices/`
+## CORE-02 🟢 RESOLVED · ✅ VERIFIED — Chinese setup downloads every voice into `voices/voices/`
 
 **Severity:** Critical · **Files:** `setup_chinese_tts.py:201-206`, verify at `:250`, `VOICES_DIR` at `:28`
 
@@ -214,7 +263,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 ---
 
-## DEPLOY-01 ✅ VERIFIED — Docker Compose refuses to start
+## DEPLOY-01 🟢 RESOLVED · ✅ VERIFIED — Docker Compose refuses to start
 
 **Severity:** Critical · **File:** `docker-compose.yml:9-11`
 
@@ -238,7 +287,7 @@ The documented Docker path is non-functional as shipped.
 
 ---
 
-## DATA-01 ✅ VERIFIED — Speed-dial presets can be silently wiped
+## DATA-01 🟢 RESOLVED · ✅ VERIFIED — Speed-dial presets can be silently wiped
 
 **Severity:** Critical · **Files:** `speed_dial.py:99-112` (save), `:124-141` (delete), `:53-55` (load)
 
@@ -283,7 +332,7 @@ fixes all three.
 
 # High
 
-## CONC-01 ✅ VERIFIED — Concurrent users overwrite (and receive) each other's audio
+## CONC-01 🟢 RESOLVED · ✅ VERIFIED — Concurrent users overwrite (and receive) each other's audio
 
 **Severity:** High · **File:** `gradio_interface.py:217-219`
 
@@ -312,7 +361,7 @@ Also unlink the intermediate WAV after mp3/aac conversion (`:283-284`) — it cu
 
 ---
 
-## CORE-03 ✅ VERIFIED — Any path containing "zh" switches to the Chinese model
+## CORE-03 🟢 RESOLVED · ✅ VERIFIED — Any path containing "zh" switches to the Chinese model
 
 **Severity:** High · **File:** `models.py:506`
 
@@ -341,7 +390,7 @@ is_chinese_model = bool(
 
 ---
 
-## FMT-01 ✅ VERIFIED — AAC export has never worked
+## FMT-01 🟢 RESOLVED · ✅ VERIFIED — AAC export has never worked
 
 **Severity:** High · **File:** `gradio_interface.py:147`
 
@@ -369,7 +418,7 @@ elif format.lower() == "aac":
 
 ---
 
-## LEGAL-01 ✅ VERIFIED — Package metadata declares the wrong license
+## LEGAL-01 🟢 RESOLVED · ✅ VERIFIED — Package metadata declares the wrong license
 
 **Severity:** High · **Files:** `pyproject.toml:10` vs `LICENSE:1-2`, `README.md:591`
 
@@ -392,7 +441,7 @@ classifiers = ["License :: OSI Approved :: Apache Software License"]
 
 ---
 
-## SEC-01 ✅ VERIFIED — Docker ships an unauthenticated UI bound to all interfaces
+## SEC-01 🟢 RESOLVED · ✅ VERIFIED — Docker ships an unauthenticated UI bound to all interfaces
 
 **Severity:** High · **Files:** `Dockerfile:43`, `docker-compose.yml:7-8`, `gradio_interface.py:613`
 
@@ -421,7 +470,7 @@ if auth is None and args.host not in LOOPBACK:
 
 ---
 
-## SEC-02 ✅ VERIFIED — CI: mutable action ref, any-user trigger, OIDC write
+## SEC-02 🟢 RESOLVED · ✅ VERIFIED — CI: mutable action ref, any-user trigger, OIDC write
 
 **Severity:** High · **File:** `.github/workflows/claude.yml:15-19`, `:25`, `:33`
 
@@ -461,7 +510,7 @@ group:
 
 ---
 
-## DEAD-01 ✅ VERIFIED — Three declared-but-inert mechanisms
+## DEAD-01 🟢 RESOLVED · ✅ VERIFIED — Three declared-but-inert mechanisms
 
 **Severity:** High · **Files:** `models.py:321`, `models.py:751`, `chinese_config.py:156`
 
@@ -481,7 +530,7 @@ same process. `ensure_voices_directory()` additionally creates a stray empty `<c
 
 ---
 
-## DOC-01 ✅ VERIFIED — "8 languages" is wrong; there are 9
+## DOC-01 🔴 OPEN · ✅ VERIFIED — "8 languages" is wrong; there are 9
 
 **Severity:** Medium · **Files:** `README.md:8`, `:322`, `:480`
 
@@ -491,7 +540,7 @@ three places.
 
 ---
 
-## ARCH-01 ⚠️ REPORTED — Three competing prefix→language mappings
+## ARCH-01 🟢 RESOLVED · ⚠️ REPORTED — Three competing prefix→language mappings
 
 **Severity:** High · **Files:** `models.py:244-254`, `gradio_interface.py:69-79`, `chinese_config.py:29`
 
@@ -511,7 +560,7 @@ Additionally `get_language_code_from_voice` (`models.py:705-715`) matches a bare
 
 ---
 
-## ARCH-02 ⚠️ REPORTED — `config.py` is a 243-line dead abstraction
+## ARCH-02 🟢 RESOLVED · ⚠️ REPORTED — `config.py` is a 243-line dead abstraction
 
 **Severity:** High · **File:** `config.py` (entire), `chinese_config.py:154-158`
 
@@ -534,7 +583,7 @@ reimplemented byte-for-byte in `gradio_interface.py:52` and `tts_demo.py:27`.
 
 ---
 
-## CONC-02 ⚠️ REPORTED — Global lock held across hundreds of MB of network I/O
+## CONC-02 🟢 RESOLVED · ⚠️ REPORTED — Global lock held across hundreds of MB of network I/O
 
 **Severity:** High · **File:** `models.py:497-655`
 
@@ -555,7 +604,7 @@ between `af_bella` and `zf_xiaobei` triggers a full rebuild each time.
 
 ---
 
-## CONC-03 ⚠️ REPORTED — Generation runs outside the lock on a false premise
+## CONC-03 🟢 RESOLVED · ⚠️ REPORTED — Generation runs outside the lock on a false premise
 
 **Severity:** High · **File:** `models.py:781-817`, comment at `:795-797`
 
@@ -570,7 +619,7 @@ unlocked generation.
 
 ---
 
-## SHUTDOWN-01 ⚠️ REPORTED — Cleanup destroys the live model mid-generation
+## SHUTDOWN-01 🟢 RESOLVED · ⚠️ REPORTED — Cleanup destroys the live model mid-generation
 
 **Severity:** High · **File:** `gradio_interface.py:453-572`, `:609-621`
 
@@ -588,7 +637,7 @@ per-language pipelines it is supposed to free are leaked, and the "freed X MB" r
 
 ---
 
-## PKG-01 ⚠️ REPORTED — Flat layout installs 9 generic top-level modules
+## PKG-01 🟢 RESOLVED · ⚠️ REPORTED — Flat layout installs 9 generic top-level modules
 
 **Severity:** High · **File:** `pyproject.toml:56-66`
 
@@ -606,7 +655,7 @@ silently creates a different `speed_dial.json` / `outputs/` / `output.wav`.
 
 ---
 
-## TEST-01 ⚠️ REPORTED — No test suite exists
+## TEST-01 🟢 RESOLVED · ⚠️ REPORTED — No test suite exists
 
 **Severity:** High · **File:** `test_offline.py`
 
@@ -628,7 +677,7 @@ Every one of this audit's verified findings would have been caught by a test in 
 
 # Medium
 
-## CFG-01 ⚠️ REPORTED — `KOKORO_CONFIG_PATH` honoured for the check, ignored for the download
+## CFG-01 🟢 RESOLVED · ⚠️ REPORTED — `KOKORO_CONFIG_PATH` honoured for the check, ignored for the download
 
 **File:** `models.py:551-573`
 
@@ -642,7 +691,7 @@ The download lands in `model_dir`, not at `KOKORO_CONFIG_PATH`, so the configure
 **Every startup re-runs the HF request**, and hard-fails the moment `HF_HUB_OFFLINE=1` is set — even
 though the config was "downloaded" on the previous 20 runs.
 
-## CFG-02 ⚠️ REPORTED — `ChineseTTSConfig` ignores its own `paths.voices_dir`
+## CFG-02 🔴 OPEN · ⚠️ REPORTED — `ChineseTTSConfig` ignores its own `paths.voices_dir`
 
 **File:** `chinese_config.py:154-158`
 
@@ -650,7 +699,7 @@ though the config was "downloaded" on the previous 20 runs.
 `chinese_tts_config.json` setting `paths.voices_dir` is parsed, merged, exposed via `get()`, and has no
 effect whatsoever.
 
-## CFG-03 ⚠️ REPORTED — `validate_sample_rate` can return an invalid rate
+## CFG-03 ⚪ OBSOLETE · ⚠️ REPORTED — `validate_sample_rate` can return an invalid rate
 
 **File:** `config.py:188-201`
 
@@ -659,14 +708,22 @@ The "default" is read from the very config the user may have corrupted:
 emits 24 kHz, so the WAV plays back 3× too slow. `validate_language` (`:209`) has the same
 self-referential pattern.
 
-## CFG-04 ⚠️ REPORTED — `_merge_config` accepts arbitrary types
+> **Status:** `config.py` was deleted in `d87f7ed` (ARCH-02), so this exact code is gone. The
+> replacement `validate_sample_rate`/`validate_language` in `gradio_interface.py` and `tts_demo.py`
+> use hard-coded defaults rather than reading them back from user config, so the pattern did not
+> survive the move.
+
+## CFG-04 🟡 PARTIAL · ⚠️ REPORTED — `_merge_config` accepts arbitrary types
 
 **Files:** `config.py:135-144`, `chinese_config.py:201-210`
 
 No type or schema check. `{"language_codes": "abc"}` makes `validate_language` execute `"abc".keys()` →
 uncaught `AttributeError`. `{"paths": "voices"}` produces a misleading "key not found" error.
 
-## TEXT-01 ⚠️ REPORTED — `normalize_chinese_text` destroys the newlines the splitter needs
+> **Status:** the `config.py` half is gone with the file. `chinese_config._merge_config` is unchanged
+> and still merges arbitrary types with no schema check.
+
+## TEXT-01 🔴 OPEN · ⚠️ REPORTED — `normalize_chinese_text` destroys the newlines the splitter needs
 
 **File:** `chinese_config.py:106-119`, consumed at `chinese_tts_demo.py:283`
 
@@ -675,7 +732,7 @@ uncaught `AttributeError`. `{"paths": "voices"}` produces a misleading "key not 
 and is **silently truncated** — a 2,000-character input yields ~15 s of audio covering the first ~400
 characters, with no error. `chinese_tts_demo.py:284` logs only `text[:50]`, hiding it.
 
-## TEXT-02 ⚠️ REPORTED — `is_chinese()` misclassifies Japanese
+## TEXT-02 🔴 OPEN · ⚠️ REPORTED — `is_chinese()` misclassifies Japanese
 
 **File:** `chinese_config.py:97-103`
 
@@ -683,7 +740,7 @@ Only checks `U+4E00–9FFF`. `is_chinese_text("日本語です")` → `True` (ka
 auto-routing sends Japanese to `zf_*` voices → Mandarin readings of Japanese kanji. Conversely misses
 Ext-A/Ext-B and fullwidth forms, warning "not Chinese" on legitimately Chinese input.
 
-## CHI-01 ⚠️ REPORTED — Chinese demo discards good audio on `None` phonemes
+## CHI-01 🔴 OPEN · ⚠️ REPORTED — Chinese demo discards good audio on `None` phonemes
 
 **File:** `chinese_tts_demo.py:331`
 
@@ -692,14 +749,14 @@ at `:337` → returns `(None, None)` → the user waits through a full synthesis
 success, then gets "生成失败" and **all audio is discarded**. `gradio_interface.py:252` and
 `models.py:813` both guard with `if ps:`; this file is the odd one out.
 
-## CHI-02 ⚠️ REPORTED — Setup fetches the v1.0 config for the v1.1-zh model
+## CHI-02 🟢 RESOLVED · ⚠️ REPORTED — Setup fetches the v1.0 config for the v1.1-zh model
 
 **File:** `setup_chinese_tts.py:156-160`
 
 Model comes from `hexgrad/Kokoro-82M-v1.1-zh`; `config.json` comes from the v1.0 repo. If the configs
 diverge (vocab, istftnet params) the pipeline is configured for the wrong checkpoint.
 
-## UX-01 ⚠️ REPORTED — Every Gradio failure returns `None`; the user sees nothing
+## UX-01 🔴 OPEN · ⚠️ REPORTED — Every Gradio failure returns `None`; the user sees nothing
 
 **File:** `gradio_interface.py:288-292`
 
@@ -709,7 +766,7 @@ blank audio player. A remote user (this is a network-shared UI) cannot distingui
 
 **Fix.** Return `(audio, status)` and render the status in a Textbox.
 
-## UX-02 ⚠️ REPORTED — Preset handlers push plain strings into a Dropdown value
+## UX-02 🔴 OPEN · ⚠️ REPORTED — Preset handlers push plain strings into a Dropdown value
 
 **File:** `gradio_interface.py:388-390`, `:403-405`
 
@@ -720,7 +777,7 @@ selected value, and a subsequent "Load" passes that string to `get_preset()`.
 `load_preset_fn` (`:377-385`) separately returns `None` for a `gr.Slider`, which is not a valid value —
 the next Generate sends `speed=None` into the pipeline.
 
-## CLI-01 ⚠️ REPORTED — `tts_demo.py` deletes the previous output before validating the new audio
+## CLI-01 🔴 OPEN · ⚠️ REPORTED — `tts_demo.py` deletes the previous output before validating the new audio
 
 **File:** `tts_demo.py:126-139`
 
@@ -729,7 +786,7 @@ A failed generation leaves the user with **no** `output.wav` at all. `ValueError
 `(IOError, PermissionError)` handler, so it pointlessly retries a deterministic failure 3× with 2 s
 sleeps.
 
-## CLI-02 ⚠️ REPORTED — Per-segment timeout silently truncates long generations
+## CLI-02 🔴 OPEN · ⚠️ REPORTED — Per-segment timeout silently truncates long generations
 
 **File:** `tts_demo.py:299-347`, `MIN_GENERATION_TIME = 60` at `:18`
 
@@ -738,7 +795,7 @@ pipeline warm-up and voice loading. On CPU a 9,000-character input (well under t
 at `:261`) exceeds 60 s on the first chunk → `break` → partial audio is saved and announced as
 `Audio saved to …`. The 300 s overall cap does the same.
 
-## PERF-01 ⚠️ REPORTED — No `torch.inference_mode()` anywhere
+## PERF-01 🔴 OPEN · ⚠️ REPORTED — No `torch.inference_mode()` anywhere
 
 **Files:** `models.py:799-814`, `gradio_interface.py:233-253`, `tts_demo.py:321-358`,
 `chinese_tts_demo.py:308-322` (verified absent repo-wide by grep)
@@ -747,7 +804,7 @@ Every generation builds a full autograd graph, retaining intermediate activation
 generation split into ~100 segments this is substantial wasted memory per concurrent request — a direct
 path to CUDA OOM under exactly the multi-user load this app targets.
 
-## PERF-02 ⚠️ REPORTED — `dependency_checker` imports everything and may spawn 13 subprocesses
+## PERF-02 🔴 OPEN · ⚠️ REPORTED — `dependency_checker` imports everything and may spawn 13 subprocesses
 
 **File:** `dependency_checker.py:58-83`
 
@@ -756,7 +813,7 @@ path to CUDA OOM under exactly the multi-user load this app targets.
 startup**. No memoization — `check_dependencies()` redoes everything on every call. Should use
 `importlib.metadata.version` instead.
 
-## DEP-01 ⚠️ REPORTED — 27 of 28 dependencies fully unpinned
+## DEP-01 🔴 OPEN · ⚠️ REPORTED — 27 of 28 dependencies fully unpinned
 
 **Files:** `requirements.txt`, `pyproject.toml:16-48`
 
@@ -769,7 +826,7 @@ Also: `maturin` (a build backend), `wheel` and `setuptools` are declared as **ru
 
 **Fix.** `pip-compile --generate-hashes`, commit the lock, install with `--require-hashes`.
 
-## SEC-03 ⚠️ REPORTED — Model artifacts fetched from a mutable revision with no integrity check
+## SEC-03 🔴 OPEN · ⚠️ REPORTED — Model artifacts fetched from a mutable revision with no integrity check
 
 **File:** `models.py:323`, `:402-413`, `:536-543`
 
@@ -778,7 +835,7 @@ only "integrity verification" is `st_size == 0` — and `hashlib` is imported at
 while the comment at `:411` says "Verify file integrity". Because `.dockerignore` excludes `voices/` and
 `*.pth`, every container build downloads fresh.
 
-## SEC-04 ⚠️ REPORTED — Unvalidated `format` reaches `mkdir(parents=True)`
+## SEC-04 🟢 RESOLVED · ⚠️ REPORTED — Unvalidated `format` reaches `mkdir(parents=True)`
 
 **File:** `gradio_interface.py:282-284`, `:139`
 
@@ -787,7 +844,7 @@ runs **before** the allow-list check at `:145-150`. A `format` of `"../../../../
 outside `outputs/`. Bounded (directory creation, not file write) and reachability depends on the Gradio
 version's `Radio.preprocess` validation — but it is defence you do not control.
 
-## SEC-05 ⚠️ REPORTED — `speed` is not validated server-side
+## SEC-05 🔴 OPEN · ⚠️ REPORTED — `speed` is not validated server-side
 
 **File:** `gradio_interface.py:167`, `:233`
 
@@ -796,7 +853,7 @@ called. The slider's `minimum`/`maximum` are client-side only. `speed=1e-9` asks
 5,000-character utterance by a factor of a billion — unauthenticated OOM in one request. `speed=0` and
 `float('nan')` also pass through (`nan` defeats both range comparisons).
 
-## SEC-06 ⚠️ REPORTED — Global `json.load` monkey-patch races other threads
+## SEC-06 🟢 RESOLVED · ⚠️ REPORTED — Global `json.load` monkey-patch races other threads
 
 **File:** `models.py:124-138`, applied at `:609`
 
@@ -808,7 +865,7 @@ decoding.
 
 **Fix.** Strip the BOM from the file once on disk; never patch a global.
 
-## ERR-01 ⚠️ REPORTED — Error handling is inconsistent and lossy
+## ERR-01 🔴 OPEN · ⚠️ REPORTED — Error handling is inconsistent and lossy
 
 **Counts:** 8 bare `except:`, 57 broad `except Exception`, 13 `traceback.print_exc()`
 
@@ -818,7 +875,7 @@ an undifferentiated `(None, None)` (`:816-827`), and the caught tuple includes `
 `except:` clauses swallow `KeyboardInterrupt` and `SystemExit`, which during the shutdown paths makes the
 process feel unkillable.
 
-## DOC-02 ⚠️ REPORTED — Further documentation drift
+## DOC-02 🟡 PARTIAL · ⚠️ REPORTED — Further documentation drift
 
 - `dependency_checker.py` is documented as checking memory, disk space and audio — it checks none.
 - The documented Chinese setup flow is broken end-to-end (CORE-02).
@@ -828,61 +885,69 @@ process feel unkillable.
 - Project-structure listing omits every packaging/Docker/CI file.
 - Documented speed ranges are wrong in both the CLI and web sections.
 
+> **Status:** the README rewrite in `d87f7ed` documented the auth flags and `KOKORO_*` env vars, fixed
+> the project-structure listing, and the Chinese setup flow now works end-to-end (CORE-02). The
+> `dependency_checker` description, the disputed voice "quality grades", the non-existent config key,
+> and the speed ranges were not revisited. The stale `initialize_phonemizer` reference introduced by
+> the same rewrite was corrected in `ff524ed`.
+
 ---
 
 # Low
 
 Grouped; each verified only as a count or by grep unless noted.
 
-| ID | Finding | Location |
-|---|---|---|
-| L-01 | `list(model.__dict__.keys())` missing → `RuntimeError: dictionary changed size during iteration` on **every** clean exit | `tts_demo.py:441` |
-| L-02 | Watchdog timer not cancelled on exception paths — fires 5 min later during an unrelated prompt | `tts_demo.py:309-379` |
-| L-03 | `Ctrl+C` in `tts_demo.py` dumps a raw traceback (`KeyboardInterrupt` is not `Exception`); `chinese_tts_demo.py:460` handles it correctly | `tts_demo.py:419` |
-| L-04 | Default voice fallbacks (`af_bella`, `zf_xiaobei`) are not validated against installed voices | `tts_demo.py:75`, `chinese_tts_demo.py:167` |
-| L-05 | Legacy voice-migration comparison is always true (`Path('voices') != Path('C:/…/voices')`); "moved" files are actually `copy2`-ed and never deleted | `models.py:677-700` |
-| L-06 | Phoneme/audio segment lists desynchronize when `ps` is empty | `models.py:806-817` |
-| L-07 | `initialize_phonemizer` probes non-English languages with Chinese text (`'测试'`), and leaves stale globals on failure. Both globals are write-only — never read anywhere | `models.py:258-310` |
-| L-08 | espeak-ng's Mandarin code is `cmn`, not `zh` — the Chinese branch fails on most installs and is swallowed | `models.py:579` |
-| L-09 | `EnhancedKPipeline.load_voice` narrows its parent's contract (path-only, drops `delimiter`, keys by `stem`) — breaks blended voices and will break on a `kokoro` upgrade | `models.py:167-190` |
-| L-10 | Import-time side effects: `logging.basicConfig` ×3 hijacking the root logger, `signal.signal`, `atexit`, an espeak probe, two config singletons doing disk I/O | `models.py:17,313`, `gradio_interface.py:550-572` |
-| L-11 | `os.environ["PYTHONIOENCODING"] = "utf-8"` at import is a no-op — the interpreter reads it only at startup | `models.py:146` |
-| L-12 | `OFFLINE_MODE` frozen at import; setting `HF_HUB_OFFLINE` later has no effect | `models.py:151` |
-| L-13 | Empty/whitespace env vars: `KOKORO_BASE_DIR="   "` creates a directory literally named three spaces | `models.py:31-68` |
-| L-14 | 30 unused imports and dead locals (pyflakes-verified); `chinese_tts_demo.py:43` imports `TTSConfig` and never uses it | all modules |
-| L-15 | `download_voice_files` bypasses `get_safe_voice_path` — latent arbitrary-overwrite if a future caller plumbs user input in | `models.py:352,417` |
-| L-16 | `download_voice_files([])` raises "check your internet connection"; `required_count` is bypassed on the early-return path | `models.py:352,367-370` |
-| L-17 | Predictable temp filename + unlink/rename TOCTOU (symlink-following write when CWD is shared) | `tts_demo.py:146-158` |
-| L-18 | Full user text logged at INFO on every request → Docker json-file log with no rotation | `gradio_interface.py:222,251` |
-| L-19 | `outputs/` grows without bound; intermediate WAV never deleted after conversion | `gradio_interface.py:62,277` |
-| L-20 | `split_chinese_text` is O(n²) via `+=` string concatenation; degenerates to one segment per character when `max_length <= 0` | `chinese_config.py:132-148` |
-| L-21 | Preset names reject non-ASCII (a project shipping full Chinese TTS); `"demo"` and `"demo "` become distinct keys | `speed_dial.py:83,103` |
-| L-22 | `validate_chinese_model()` returns `True` for a 2 KB truncated download — the size check only warns | `chinese_config.py:260-271` |
-| L-23 | `tts_demo.main()` is 298 lines at 9 levels of nesting; `chinese_tts_demo.py` duplicates the entire CLI scaffolding | `tts_demo.py:227-417` |
-| L-24 | 319 `print()` vs 100 `logger.*`; 4 files use only `print` | all modules |
-| L-25 | Container runs as UID 10001 against host-owned bind mounts — writes fail on Linux | `Dockerfile:31-35` |
-| L-26 | `.gradio/certificate.pem` committed (it is the public ISRG Root X1 CA — not a secret, but noise) | `.gradio/` |
-| L-27 | Unpinned base image, no build cache mount, no OCI labels, no healthcheck | `Dockerfile` |
-| L-28 | Per-request imports inside hot functions (`import psutil` on every Generate click) | `gradio_interface.py:179` |
-| L-29 | Unreachable `else` branch and dead `return` | `gradio_interface.py:231-235`, `models.py:433` |
-| L-30 | `models.generate_speech` and `models.load_voice` — 110 LOC of public API with **zero callers**; all three front-ends hand-roll the generator loop instead | `models.py:717-827` |
+| ID | Finding | Location | Status |
+|---|---|---|---|
+| L-01 | `list(model.__dict__.keys())` missing → `RuntimeError: dictionary changed size during iteration` on **every** clean exit | `tts_demo.py:441` | 🟢 |
+| L-02 | Watchdog timer not cancelled on exception paths — fires 5 min later during an unrelated prompt | `tts_demo.py:309-379` | 🔴 |
+| L-03 | `Ctrl+C` in `tts_demo.py` dumps a raw traceback (`KeyboardInterrupt` is not `Exception`); `chinese_tts_demo.py:460` handles it correctly | `tts_demo.py:419` | 🔴 |
+| L-04 | Default voice fallbacks (`af_bella`, `zf_xiaobei`) are not validated against installed voices | `tts_demo.py:75`, `chinese_tts_demo.py:167` | ◻️ |
+| L-05 | Legacy voice-migration comparison is always true (`Path('voices') != Path('C:/…/voices')`); "moved" files are actually `copy2`-ed and never deleted | `models.py:677-700` | 🔴 |
+| L-06 | Phoneme/audio segment lists desynchronize when `ps` is empty | `models.py:806-817` | 🔴 |
+| L-07 | `initialize_phonemizer` probes non-English languages with Chinese text (`'测试'`), and leaves stale globals on failure. Both globals are write-only — never read anywhere | `models.py:258-310` | 🟢 |
+| L-08 | espeak-ng's Mandarin code is `cmn`, not `zh` — the Chinese branch fails on most installs and is swallowed | `models.py:579` | 🟢 |
+| L-09 | `EnhancedKPipeline.load_voice` narrows its parent's contract (path-only, drops `delimiter`, keys by `stem`) — breaks blended voices and will break on a `kokoro` upgrade | `models.py:167-190` | 🔴 |
+| L-10 | Import-time side effects: `logging.basicConfig` ×3 hijacking the root logger, `signal.signal`, `atexit`, an espeak probe, two config singletons doing disk I/O | `models.py:17,313`, `gradio_interface.py:550-572` | 🟡 |
+| L-11 | `os.environ["PYTHONIOENCODING"] = "utf-8"` at import is a no-op — the interpreter reads it only at startup | `models.py:146` | 🔴 |
+| L-12 | `OFFLINE_MODE` frozen at import; setting `HF_HUB_OFFLINE` later has no effect | `models.py:151` | 🔴 |
+| L-13 | Empty/whitespace env vars: `KOKORO_BASE_DIR="   "` creates a directory literally named three spaces | `models.py:31-68` | 🔴 |
+| L-14 | 30 unused imports and dead locals (pyflakes-verified); `chinese_tts_demo.py:43` imports `TTSConfig` and never uses it | all modules | 🟡 |
+| L-15 | `download_voice_files` bypasses `get_safe_voice_path` — latent arbitrary-overwrite if a future caller plumbs user input in | `models.py:352,417` | 🔴 |
+| L-16 | `download_voice_files([])` raises "check your internet connection"; `required_count` is bypassed on the early-return path | `models.py:352,367-370` | 🔴 |
+| L-17 | Predictable temp filename + unlink/rename TOCTOU (symlink-following write when CWD is shared) | `tts_demo.py:146-158` | ◻️ |
+| L-18 | Full user text logged at INFO on every request → Docker json-file log with no rotation | `gradio_interface.py:222,251` | ◻️ |
+| L-19 | `outputs/` grows without bound; intermediate WAV never deleted after conversion | `gradio_interface.py:62,277` | 🟡 |
+| L-20 | `split_chinese_text` is O(n²) via `+=` string concatenation; degenerates to one segment per character when `max_length <= 0` | `chinese_config.py:132-148` | ◻️ |
+| L-21 | Preset names reject non-ASCII (a project shipping full Chinese TTS); `"demo"` and `"demo "` become distinct keys | `speed_dial.py:83,103` | 🔴 |
+| L-22 | `validate_chinese_model()` returns `True` for a 2 KB truncated download — the size check only warns | `chinese_config.py:260-271` | ◻️ |
+| L-23 | `tts_demo.main()` is 298 lines at 9 levels of nesting; `chinese_tts_demo.py` duplicates the entire CLI scaffolding | `tts_demo.py:227-417` | ◻️ |
+| L-24 | 319 `print()` vs 100 `logger.*`; 4 files use only `print` | all modules | ◻️ |
+| L-25 | Container runs as UID 10001 against host-owned bind mounts — writes fail on Linux | `Dockerfile:31-35` | 🟢 |
+| L-26 | `.gradio/certificate.pem` committed (it is the public ISRG Root X1 CA — not a secret, but noise) | `.gradio/` | 🔴 |
+| L-27 | Unpinned base image, no build cache mount, no OCI labels, no healthcheck | `Dockerfile` | 🟡 |
+| L-28 | Per-request imports inside hot functions (`import psutil` on every Generate click) | `gradio_interface.py:179` | ◻️ |
+| L-29 | Unreachable `else` branch and dead `return` | `gradio_interface.py:231-235`, `models.py:433` | 🟢 |
+| L-30 | `models.generate_speech` and `models.load_voice` — 110 LOC of public API with **zero callers**; all three front-ends hand-roll the generator loop instead | `models.py:717-827` | 🔴 |
 
 ---
 
 # Quick wins — all verified, under one hour total
 
-| # | Change | Time |
-|---|---|---|
-| 1 | Correct the package license to Apache-2.0 in `pyproject.toml` | 2 min |
-| 2 | Make `environment:` a mapping so Docker Compose starts at all | 2 min |
-| 3 | Fix the language count — "8 languages" → 9, in three README locations | 3 min |
-| 4 | Switch AAC to the `adts` muxer with explicit `codec="aac"` | 5 min |
-| 5 | Match "zh" against the filename, not the whole absolute path | 5 min |
-| 6 | Add a UUID suffix to generated output filenames | 5 min |
-| 7 | Delete `_download_lock` or wire it into the download path | 5 min |
-| 8 | `list(model.__dict__.keys())` in `tts_demo.py:441` — stops the `RuntimeError` on every clean exit | 2 min |
-| 9 | Delete `LANG_MAP` (and its phantom `fm_`); import the mapping from `models.py` | 10 min |
-| 10 | Honour or remove `generate_speech(lang=…)` | 15 min |
+**9 of 10 done.** Only #3 remains, and it is a 3-minute edit.
+
+| # | Change | Time | Status |
+|---|---|---|---|
+| 1 | Correct the package license to Apache-2.0 in `pyproject.toml` | 2 min | 🟢 |
+| 2 | Make `environment:` a mapping so Docker Compose starts at all | 2 min | 🟢 |
+| 3 | Fix the language count — "8 languages" → 9, in three README locations | 3 min | 🔴 |
+| 4 | Switch AAC to the `adts` muxer with explicit `codec="aac"` | 5 min | 🟢 |
+| 5 | Match "zh" against the filename, not the whole absolute path | 5 min | 🟢 |
+| 6 | Add a UUID suffix to generated output filenames | 5 min | 🟢 |
+| 7 | Delete `_download_lock` or wire it into the download path | 5 min | 🟢 |
+| 8 | `list(model.__dict__.keys())` in `tts_demo.py:441` — stops the `RuntimeError` on every clean exit | 2 min | 🟢 |
+| 9 | Delete `LANG_MAP` (and its phantom `fm_`); import the mapping from `models.py` | 10 min | 🟢 |
+| 10 | Honour or remove `generate_speech(lang=…)` | 15 min | 🟢 |
 
 ---
 
@@ -890,16 +955,18 @@ Grouped; each verified only as a count or by grep unless noted.
 
 Effort: **S** <1h · **M** ~half a day · **L** ~2–3 days · **XL** a week or more
 
-| # | Phase | Contains | Effort |
-|---|---|---|---|
-| 1 | **Stop the bleeding** | All ten quick wins. Restores Docker, AAC and license correctness; removes the two silent mis-routings. | S |
-| 2 | **Make failures visible** | Surface errors in the Gradio UI instead of returning `None` (UX-01); replace the 8 bare `except:`; stop `generate_speech` collapsing every failure into `(None, None)`. **Do this before the deeper fixes so you can see them work.** | M |
-| 3 | **Fix the model path** | CORE-01 and CORE-02 — plumb the checkpoint into `KPipeline`; rewrite Chinese setup to reuse `models.download_voice_files()`. | M |
-| 4 | **Durable state** | DATA-01 atomic writes + lock, applied to `speed_dial.py` and both config classes (identical bug, one helper). | S |
-| 5 | **Harden the deployment** | SEC-01 loopback publish + mandatory auth off-loopback; SEC-02 pin the action, gate on author association, drop `id-token`; commit a hash-pinned lock file (DEP-01). | M |
-| 6 | **Add the missing net** | A real `pytest` suite plus a CI workflow. Start with the five areas from TEST-01 — each would have caught a verified finding above. Add `ruff` for the 30 dead imports. | L |
-| 7 | **Collapse the duplication** | Delete or fully adopt `config.py`; make `ChineseTTSConfig` subclass `TTSConfig`; one `get_voices_dir()` everywhere; extract shared CLI scaffolding. Roughly −500 LOC. | L |
-| 8 | **Concurrency model** | Per-language pipeline cache with eviction; network I/O outside the global lock; per-pipeline lock held across generation; drain-aware idempotent shutdown; `torch.inference_mode()` at all four generation sites. | XL |
+Status as of `ff524ed`. Phases 1, 3 and 8 are essentially complete; 2 has not been started.
+
+| # | Phase | Contains | Effort | Status |
+|---|---|---|---|---|
+| 1 | **Stop the bleeding** | All ten quick wins. Restores Docker, AAC and license correctness; removes the two silent mis-routings. | S | 🟡 9/10 — quick win #3 outstanding |
+| 2 | **Make failures visible** | Surface errors in the Gradio UI instead of returning `None` (UX-01); replace the 8 bare `except:`; stop `generate_speech` collapsing every failure into `(None, None)`. **Do this before the deeper fixes so you can see them work.** | M | 🔴 Not started — **now the highest-value remaining phase** |
+| 3 | **Fix the model path** | CORE-01 and CORE-02 — plumb the checkpoint into `KPipeline`; rewrite Chinese setup to reuse `models.download_voice_files()`. | M | 🟢 Done |
+| 4 | **Durable state** | DATA-01 atomic writes + lock, applied to `speed_dial.py` and both config classes (identical bug, one helper). | S | 🟡 `speed_dial.py` done; `chinese_config.py` still writes non-atomically |
+| 5 | **Harden the deployment** | SEC-01 loopback publish + mandatory auth off-loopback; SEC-02 pin the action, gate on author association, drop `id-token`; commit a hash-pinned lock file (DEP-01). | M | 🟡 SEC-01/SEC-02 done; DEP-01 lock file outstanding |
+| 6 | **Add the missing net** | A real `pytest` suite plus a CI workflow. Start with the five areas from TEST-01 — each would have caught a verified finding above. Add `ruff` for the 30 dead imports. | L | 🟡 `unittest` suite + two-OS CI exist; no `ruff`, dead imports remain |
+| 7 | **Collapse the duplication** | Delete or fully adopt `config.py`; make `ChineseTTSConfig` subclass `TTSConfig`; one `get_voices_dir()` everywhere; extract shared CLI scaffolding. Roughly −500 LOC. | L | 🟡 `config.py` deleted and paths unified via `paths.py`; CLI scaffolding still duplicated |
+| 8 | **Concurrency model** | Per-language pipeline cache with eviction; network I/O outside the global lock; per-pipeline lock held across generation; drain-aware idempotent shutdown; `torch.inference_mode()` at all four generation sites. | XL | 🟡 Done except `torch.inference_mode()` (PERF-01) and cache eviction |
 
 ### One structural note
 
@@ -909,8 +976,26 @@ pipeline immutable after construction and caching per language collapses roughly
 findings at once. That is the highest-leverage refactor in phase 8 and is worth doing before the smaller
 concurrency patches.
 
+**Outcome (2026-07-29).** This was done: pipelines are keyed by full immutable identity, `device` and
+`lang_code` raise on reassignment after publication, and one `KModel` plus one lock is shared per
+model family. It collapsed CONC-02, CONC-03 and SHUTDOWN-01 as predicted. It also introduced REG-03 —
+holding the family lock across lazy iteration is correct, but nothing made the generator's owners
+close it. The refactor was right; its blast radius was one step larger than the plan accounted for.
+
+### Suggested next steps
+
+1. Quick win #3 (3 min) — closes the last High.
+2. Phase 2, "make failures visible" — still untouched and still the prerequisite for trusting
+   anything else. UX-01 alone means a remote user cannot tell a missing ffmpeg from a slow request.
+3. PERF-01 `torch.inference_mode()` — one decorator at each generation site, and the only remaining
+   item from the otherwise-complete concurrency phase.
+4. Delete the dead `os.environ["PYTHONIOENCODING"] = "utf-8"` at `models.py:85` (L-11). It has never
+   done anything — the interpreter reads that variable only at startup — and now sits next to
+   `console.py`, which solves the problem it was reaching for.
+
 ---
 
 *Generated by a six-agent parallel audit. Findings marked ✅ VERIFIED were confirmed directly against
 source or by execution; ⚠️ REPORTED findings are agent-reported leads that should be confirmed before
-acting.*
+acting. Status markers (🟢🔴🟡⚪◻️) were added in the 2026-07-29 reconciliation pass and reflect the
+tree at `ff524ed`, not the audited commit.*
