@@ -21,6 +21,53 @@ logger = logging.getLogger(__name__)
 _VOICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 
+def get_base_dir() -> Path:
+    """Return the base directory used to resolve default file locations.
+
+    Resolution order:
+    1. ``KOKORO_BASE_DIR`` environment variable, if set.
+    2. The current working directory (preserves historical behavior).
+    """
+    base_dir = os.environ.get("KOKORO_BASE_DIR")
+    return Path(base_dir).resolve() if base_dir else Path.cwd()
+
+
+def get_voices_dir() -> Path:
+    """Return the directory containing voice (.pt) files.
+
+    Overridable via the ``KOKORO_VOICES_DIR`` environment variable
+    (absolute or relative path). Defaults to ``<base_dir>/voices``.
+    """
+    voices_dir = os.environ.get("KOKORO_VOICES_DIR")
+    if voices_dir:
+        return Path(voices_dir).resolve()
+    return (get_base_dir() / "voices").resolve()
+
+
+def get_model_dir() -> Path:
+    """Return the directory used to locate/download model and config files.
+
+    Overridable via the ``KOKORO_MODEL_DIR`` environment variable.
+    Defaults to the base directory (see :func:`get_base_dir`).
+    """
+    model_dir = os.environ.get("KOKORO_MODEL_DIR")
+    if model_dir:
+        return Path(model_dir).resolve()
+    return get_base_dir()
+
+
+def get_config_path() -> Path:
+    """Return the path to ``config.json``.
+
+    Overridable via the ``KOKORO_CONFIG_PATH`` environment variable
+    (path to the file itself). Defaults to ``<model_dir>/config.json``.
+    """
+    config_path = os.environ.get("KOKORO_CONFIG_PATH")
+    if config_path:
+        return Path(config_path).resolve()
+    return (get_model_dir() / "config.json").resolve()
+
+
 def get_safe_voice_path(voice_name: str) -> Path:
     """Return a validated, canonical voice file path.
 
@@ -35,7 +82,7 @@ def get_safe_voice_path(voice_name: str) -> Path:
     if not _VOICE_NAME_RE.match(voice_name):
         raise ValueError(f"Invalid voice name: {voice_name!r}")
 
-    voices_dir = Path("voices").resolve()
+    voices_dir = get_voices_dir()
     voice_path = (voices_dir / f"{voice_name}.pt").resolve()
 
     # Ensure the resolved path is still inside the voices directory
@@ -292,9 +339,9 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
     import hashlib
     import time
 
-    # Use absolute path for voices directory
-    voices_dir = Path("voices").resolve()
-    voices_dir.mkdir(exist_ok=True)
+    # Use configured voices directory (see get_voices_dir)
+    voices_dir = get_voices_dir()
+    voices_dir.mkdir(parents=True, exist_ok=True)
 
     # Import here to avoid startup dependency
     from huggingface_hub import hf_hub_download
@@ -458,11 +505,19 @@ def build_model(
             # Determine if this is a Chinese model
             is_chinese_model = lang_code == 'z' or (model_path and 'zh' in str(model_path).lower())
 
+            # Directory used for locating/downloading the model and config
+            # files. Overridable via KOKORO_MODEL_DIR (see get_model_dir()).
+            model_dir = get_model_dir()
+
             # Download model if it doesn't exist
             if model_path is None:
-                model_path = 'kokoro-v1_1-zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
+                default_filename = 'kokoro-v1_1-zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
+                model_path = str(model_dir / default_filename)
+            else:
+                # Explicit paths are resolved relative to the current
+                # working directory, preserving prior behavior.
+                model_path = os.path.abspath(model_path)
 
-            model_path = os.path.abspath(model_path)
             if not os.path.exists(model_path):
                 if OFFLINE_MODE:
                     error_msg = f"Model file {model_path} not found and running in OFFLINE mode. Please download the model first with network connection."
@@ -477,10 +532,11 @@ def build_model(
                     filename = 'kokoro-v1_1-zh.pth' if is_chinese_model else 'kokoro-v1_0.pth'
                     model_repo_id = "hexgrad/Kokoro-82M-v1.1-zh" if is_chinese_model else "hexgrad/Kokoro-82M"
 
+                    model_dir.mkdir(parents=True, exist_ok=True)
                     model_path = hf_hub_download(
                         repo_id=model_repo_id,
                         filename=filename,
-                        local_dir=".",
+                        local_dir=str(model_dir),
                         force_download=False,
                         revision=repo_version,
                         local_files_only=OFFLINE_MODE
@@ -490,8 +546,9 @@ def build_model(
                     logger.error(f"Error downloading model: {e}")
                     raise ValueError(f"Could not download model: {e}") from e
 
-            # Download config if it doesn't exist
-            config_path = os.path.abspath("config.json")
+            # Download config if it doesn't exist. Overridable via
+            # KOKORO_CONFIG_PATH (see get_config_path()).
+            config_path = str(get_config_path())
             if not os.path.exists(config_path):
                 if OFFLINE_MODE:
                     error_msg = f"Config file {config_path} not found and running in OFFLINE mode. Please download the config first with network connection."
@@ -501,10 +558,11 @@ def build_model(
                 logger.info("Downloading config file...")
                 try:
                     from huggingface_hub import hf_hub_download
+                    model_dir.mkdir(parents=True, exist_ok=True)
                     config_path = hf_hub_download(
                         repo_id="hexgrad/Kokoro-82M",
                         filename="config.json",
-                        local_dir=".",
+                        local_dir=str(model_dir),
                         force_download=False,
                         revision=repo_version,
                         local_files_only=OFFLINE_MODE
@@ -573,7 +631,7 @@ def build_model(
                 )
 
             for voice_file in matching_voice_files or downloaded_voices:
-                voice_path = os.path.abspath(os.path.join("voices", voice_file))
+                voice_path = str(get_voices_dir() / voice_file)
                 if os.path.exists(voice_path):
                     try:
                         pipeline_instance.load_voice(voice_path)
@@ -598,13 +656,13 @@ def build_model(
 
 def list_available_voices() -> List[str]:
     """List all available voice models"""
-    # Always use absolute path for consistency
-    voices_dir = Path(os.path.abspath("voices"))
+    # Use configured voices directory (see get_voices_dir)
+    voices_dir = get_voices_dir()
 
     # Create voices directory if it doesn't exist
     if not voices_dir.exists():
         print(f"Creating voices directory at {voices_dir}")
-        voices_dir.mkdir(exist_ok=True)
+        voices_dir.mkdir(parents=True, exist_ok=True)
         return []
 
     # Get all .pt files in the voices directory
