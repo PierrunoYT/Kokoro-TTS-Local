@@ -10,6 +10,8 @@ python setup_chinese_tts.py
 
 # 2. Run interactive demo
 python chinese_tts_demo.py
+# or, if installed via `pip install -e .`:
+kokoro-tts-chinese
 ```
 
 ## Python API
@@ -67,4 +69,4 @@ if audio is not None:
 
 ---
 
-**Version**: 1.0 | **Model**: Kokoro-82M-v1.1_zh
+**Model**: Kokoro-82M-v1.1_zh

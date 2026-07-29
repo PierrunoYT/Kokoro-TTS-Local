@@ -33,7 +33,7 @@ The **Kokoro-82M-v1.1_zh** is a fine-tuned Mandarin Chinese TTS model for high-q
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.10–3.12 (**Python 3.13+ is not supported** — see the main [README.md](README.md#prerequisites))
 - ~1GB free disk space
 - Internet connection (for initial download)
 
@@ -54,13 +54,17 @@ This script automatically downloads the model and all voice files.
    # Place kokoro-v1_1-zh.pth in project root
    ```
 
-2. **Download voice files** to `voices/` directory:
+2. **Download `config.json`** (from the base `hexgrad/Kokoro-82M` repo) into the project root.
+
+3. **Download voice files** to `voices/` directory:
    - Female: `zf_xiaobei.pt`, `zf_xiaoni.pt`, `zf_xiaoxiao.pt`, `zf_xiaoyi.pt`
    - Male: `zm_yunjian.pt`, `zm_yunxi.pt`, `zm_yunxia.pt`, `zm_yunyang.pt`
 
-3. **Install dependencies:**
+4. **Install dependencies:**
    ```bash
    pip install -r requirements.txt
+   # or, to install this project itself as a package:
+   pip install -e .
    ```
 
 ---
@@ -71,6 +75,8 @@ This script automatically downloads the model and all voice files.
 
 ```bash
 python chinese_tts_demo.py
+# or, if installed via `pip install -e .`:
+kokoro-tts-chinese
 ```
 
 The interactive menu provides:
@@ -247,5 +253,5 @@ A: Not yet, but you can modify `gradio_interface.py` to support Chinese.
 
 ---
 
-**Version**: 1.0 | **Last Updated**: 2024
+**Model**: Kokoro-82M-v1.1_zh
 
