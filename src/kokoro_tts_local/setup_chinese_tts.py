@@ -15,7 +15,14 @@ import tempfile
 from pathlib import Path
 import logging
 from typing import List, Tuple
+from .console import enable_utf8_console
 from .paths import get_model_dir, get_voices_dir, get_config_path
+
+# Applied at import rather than in the entry point: every function in this
+# module prints Chinese, so any caller — CLI, script, or test — needs the
+# streams usable before the first call. No-op unless the current encoding
+# cannot represent the output.
+enable_utf8_console()
 
 # Configure logging
 logging.basicConfig(

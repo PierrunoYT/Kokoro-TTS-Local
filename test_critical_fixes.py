@@ -2,6 +2,7 @@
 
 import importlib.util
 import hashlib
+import io
 import json
 import os
 import sys
@@ -15,7 +16,25 @@ from unittest import mock
 SRC = Path(__file__).parent / "src"
 sys.path.insert(0, str(SRC))
 
-from kokoro_tts_local import setup_chinese_tts, speed_dial
+from kokoro_tts_local import console, setup_chinese_tts, speed_dial
+
+
+class ConsoleEncodingTests(unittest.TestCase):
+    def test_legacy_code_page_is_upgraded_and_utf8_left_alone(self):
+        legacy = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with mock.patch.object(sys, "stdout", legacy), mock.patch.object(
+            sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        ):
+            self.assertTrue(console.enable_utf8_console())
+            self.assertEqual(legacy.encoding, "utf-8")
+            # The bilingual entry points print this on every line.
+            print("下载配置文件 (Downloading Config File)...")
+
+        already_utf8 = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        with mock.patch.object(sys, "stdout", already_utf8), mock.patch.object(
+            sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        ):
+            self.assertFalse(console.enable_utf8_console())
 
 
 class SpeedDialPersistenceTests(unittest.TestCase):
@@ -200,6 +219,23 @@ class ModelConstructionTests(unittest.TestCase):
             self.assertEqual(versioned.model.kwargs["model"], str(revision_model))
             self.assertEqual(versioned.model.kwargs["config"], {"revision": True})
 
+            # A mistyped explicit checkpoint must fail loudly rather than be
+            # filled in with the repository default.
+            missing = root / "typo.pth"
+            with self.assertRaises(ValueError) as caught:
+                module.build_model(str(missing), "cpu", lang_code="a")
+            self.assertIn("not found", str(caught.exception))
+            self.assertFalse(missing.exists())
+
+            # Voice names the router cannot classify never reach a picker.
+            (voices / "af_test.pt").write_bytes(b"voice")
+            (voices / "custom.pt").write_bytes(b"voice")
+            (voices / "qq_test.pt").write_bytes(b"voice")
+            listed = module.list_available_voices()
+            self.assertIn("af_test", listed)
+            self.assertNotIn("custom", listed)
+            self.assertNotIn("qq_test", listed)
+
 
 class ConcurrencyLifecycleTests(unittest.TestCase):
     def test_registry_iteration_validation_and_shutdown(self):
@@ -308,6 +344,14 @@ class ConcurrencyLifecycleTests(unittest.TestCase):
             american.voices["af_test"] = FakeTensor()
             american.load_voice(str(voices / "af_test.pt"))
             fake_torch.load.assert_not_called()
+
+            # A generator abandoned part-way must release the family lock as
+            # soon as it is closed, not whenever the caller happens to return.
+            partial = american.iter_speech("partial", voice=str(voices / "af_test.pt"))
+            next(partial)
+            partial.close()
+            self.assertTrue(american._family_lock.acquire(timeout=1))
+            american._family_lock.release()
 
             first_started = threading.Event()
             release_first = threading.Event()

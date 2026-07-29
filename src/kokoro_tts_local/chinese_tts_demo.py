@@ -32,7 +32,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import from local modules
-from .models import build_model, generate_speech, EnhancedKPipeline, get_safe_voice_path, shutdown_pipelines, get_base_dir, get_model_dir
+from contextlib import closing
+from .console import enable_utf8_console
+
+# See setup_chinese_tts: this module's output is bilingual throughout, so the
+# streams must be usable before any function here runs.
+enable_utf8_console()
+
+from .models import build_model, EnhancedKPipeline, get_safe_voice_path, shutdown_pipelines, get_base_dir, get_model_dir
 from .chinese_config import (
     ChineseTextProcessor,
     ChineseTTSConfig,
@@ -303,21 +310,21 @@ def generate_chinese_speech(
         all_phonemes = []
 
         try:
-            generator = model.iter_speech(
+            # The generator holds the model-family lock until closed.
+            with closing(model.iter_speech(
                 text,
                 voice=str(voice_path),
                 speed=speed,
                 split_pattern=r'\n+'
-            )
-
-            for gs, ps, audio in generator:
-                if audio is not None:
-                    # Convert to numpy if needed
-                    if isinstance(audio, torch.Tensor):
-                        audio = audio.detach().cpu().numpy()
-                    audio_segments.append(audio)
-                    all_phonemes.append(ps)
-                    logger.info(f"生成了句段: {gs} (Generated segment: {gs})")
+            )) as generator:
+                for gs, ps, audio in generator:
+                    if audio is not None:
+                        # Convert to numpy if needed
+                        if isinstance(audio, torch.Tensor):
+                            audio = audio.detach().cpu().numpy()
+                        audio_segments.append(audio)
+                        all_phonemes.append(ps)
+                        logger.info(f"生成了句段: {gs} (Generated segment: {gs})")
 
             # Concatenate all audio segments
             if audio_segments:

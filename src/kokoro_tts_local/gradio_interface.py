@@ -34,9 +34,10 @@ import numpy as np
 import argparse
 import threading
 from typing import Union, List, Optional, Tuple, Dict, Any
+from contextlib import closing
 from .models import (
     list_available_voices, build_model,
-    generate_speech, download_voice_files, EnhancedKPipeline,
+    download_voice_files, EnhancedKPipeline,
     get_safe_voice_path, get_language_code_from_voice, shutdown_pipelines,
     get_base_dir
 )
@@ -208,25 +209,31 @@ def generate_tts_with_logs(voice_name: str, text: str, format: str, speed: float
 
         try:
             pipeline = get_pipeline_for_voice(voice_name)
-            generator = pipeline.iter_speech(text, voice=str(voice_path), speed=speed, split_pattern=r'\n+')
 
             all_audio = []
             max_segments = 100  # Safety limit for very long texts
             segment_count = 0
 
-            for gs, ps, audio in generator:
-                segment_count += 1
-                if segment_count > max_segments:
-                    print(f"Warning: Reached maximum segment limit ({max_segments})")
-                    break
+            # The generator owns the model-family lock until it is closed, so
+            # it must not outlive this loop: hitting max_segments would
+            # otherwise hold the lock through file writing and conversion, and
+            # block shutdown, which drains by acquiring every family lock.
+            with closing(pipeline.iter_speech(
+                text, voice=str(voice_path), speed=speed, split_pattern=r'\n+'
+            )) as generator:
+                for gs, ps, audio in generator:
+                    segment_count += 1
+                    if segment_count > max_segments:
+                        print(f"Warning: Reached maximum segment limit ({max_segments})")
+                        break
 
-                if audio is not None:
-                    if isinstance(audio, np.ndarray):
-                        audio = torch.from_numpy(audio).float()
-                    all_audio.append(audio)
-                    print(f"Generated segment: {gs}")
-                    if ps:  # Only print phonemes if available
-                        print(f"Phonemes: {ps}")
+                    if audio is not None:
+                        if isinstance(audio, np.ndarray):
+                            audio = torch.from_numpy(audio).float()
+                        all_audio.append(audio)
+                        print(f"Generated segment: {gs}")
+                        if ps:  # Only print phonemes if available
+                            print(f"Phonemes: {ps}")
 
             if not all_audio:
                 raise Exception("No audio generated")

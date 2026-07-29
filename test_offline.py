@@ -4,6 +4,7 @@ Test script for verifying offline mode functionality of Kokoro-TTS-Local
 """
 import os
 import sys
+from contextlib import closing
 from pathlib import Path
 import torch
 
@@ -212,12 +213,14 @@ def test_speech_generation() -> bool:
         voice_path = get_safe_voice_path(voice)
 
         all_audio = []
-        generator = model.iter_speech(DEFAULT_TEST_TEXT, voice=str(voice_path), speed=1.0, split_pattern=r'\n+')
-
-        for gs, ps, audio in generator:
-            if audio is not None:
-                audio_tensor = audio if isinstance(audio, torch.Tensor) else torch.from_numpy(audio).float()
-                all_audio.append(audio_tensor)
+        # The generator holds the model-family lock until closed.
+        with closing(model.iter_speech(
+            DEFAULT_TEST_TEXT, voice=str(voice_path), speed=1.0, split_pattern=r'\n+'
+        )) as generator:
+            for gs, ps, audio in generator:
+                if audio is not None:
+                    audio_tensor = audio if isinstance(audio, torch.Tensor) else torch.from_numpy(audio).float()
+                    all_audio.append(audio_tensor)
 
         if not all_audio:
             print_status("Speech generation", False, "No audio generated")

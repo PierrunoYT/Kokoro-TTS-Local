@@ -140,7 +140,7 @@ if audio is not None:
 
 **Cause**: Wrong phonemizer language configuration.
 
-**Solution**: Use `chinese_tts_demo.py` (not `tts_demo.py`). The code automatically initializes the Chinese phonemizer.
+**Solution**: Use `kokoro-tts-chinese` (not `kokoro-tts`). It builds the pipeline with `lang_code='z'`, which selects the Mandarin G2P frontend; the English CLI does not.
 
 ### "Model file not found"
 

@@ -9,7 +9,16 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Git Bash on the Windows runner, so globs and env-var syntax below
+        # behave identically on both platforms.
+        shell: bash
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -19,8 +28,15 @@ jobs:
           python-version: "3.11"
       - name: Run regression tests
         run: python -m unittest -v test_critical_fixes.py
+      - name: Run regression tests on a legacy console code page
+        if: runner.os == 'Windows'
+        # Guards the bilingual entry points against UnicodeEncodeError when the
+        # console cannot represent Chinese output (see console.py).
+        env:
+          PYTHONIOENCODING: cp1252
+        run: python -m unittest -v test_critical_fixes.py
       - name: Compile package modules
-        run: python -m py_compile src/kokoro_tts_local/*.py
+        run: python -m compileall -q src/kokoro_tts_local
       - name: Build wheel
         run: python -m pip wheel . --no-deps --wheel-dir dist
       - name: Verify installed namespace and entry points

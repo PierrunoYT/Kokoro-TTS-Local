@@ -5,6 +5,7 @@ from kokoro import KModel, KPipeline
 import os
 import json
 import re
+import contextlib
 import hashlib
 from pathlib import Path
 import numpy as np
@@ -338,28 +339,33 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
                     delay = retry_delay * (2 ** (attempt - 1))
                     time.sleep(delay)
 
-                # Serialize check/download/promotion. The temporary directory is
-                # beside the destination, making os.replace atomic.
-                with _download_lock:
-                    voice_path = voices_dir / voice_file
-                    if voice_path.exists() and voice_path.stat().st_size > 0:
-                        return voice_file, True, f"Voice file {voice_file} already exists"
-                    temp_dir = tempfile.mkdtemp(dir=voices_dir, prefix='.voice-')
-                    try:
-                        downloaded_path = hf_hub_download(
-                            repo_id="hexgrad/Kokoro-82M",
-                            filename=f"voices/{voice_file}",
-                            local_dir=temp_dir,
-                            force_download=False,
-                            revision=repo_version,
-                            local_files_only=OFFLINE_MODE
-                        )
-                        if Path(downloaded_path).stat().st_size == 0:
-                            raise ValueError(f"Downloaded file {voice_file} has zero size")
+                voice_path = voices_dir / voice_file
+                if voice_path.exists() and voice_path.stat().st_size > 0:
+                    return voice_file, True, f"Voice file {voice_file} already exists"
+
+                # The fetch targets a private temporary directory beside the
+                # destination, so it needs no lock and stays parallel across
+                # workers. Only the existence re-check and the atomic promotion
+                # are serialized.
+                temp_dir = tempfile.mkdtemp(dir=voices_dir, prefix='.voice-')
+                try:
+                    downloaded_path = hf_hub_download(
+                        repo_id="hexgrad/Kokoro-82M",
+                        filename=f"voices/{voice_file}",
+                        local_dir=temp_dir,
+                        force_download=False,
+                        revision=repo_version,
+                        local_files_only=OFFLINE_MODE
+                    )
+                    if Path(downloaded_path).stat().st_size == 0:
+                        raise ValueError(f"Downloaded file {voice_file} has zero size")
+                    with _download_lock:
+                        if voice_path.exists() and voice_path.stat().st_size > 0:
+                            return voice_file, True, f"Voice file {voice_file} already exists"
                         os.replace(downloaded_path, voice_path)
-                        return voice_file, True, f"Successfully downloaded {voice_file}"
-                    finally:
-                        shutil.rmtree(temp_dir)
+                    return voice_file, True, f"Successfully downloaded {voice_file}"
+                finally:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
 
             except Exception as e:
                 error_msg = f"Failed to download {voice_file} (attempt {attempt+1}/{retry_count}): {e}"
@@ -457,9 +463,18 @@ def build_model(
 
     failure = None
     try:
+        # An explicitly requested checkpoint is never fetched: silently writing
+        # the repository default to a caller-supplied path would disguise a
+        # mistyped path as a working (but wrong) fine-tune.
+        artifacts = [(config_path, 'config.json')]
+        if model_path is None:
+            artifacts.insert(0, (checkpoint, filename))
+        elif not os.path.exists(checkpoint):
+            raise ValueError(f"Model file not found: {checkpoint}")
+
         # Artifact operations alone use the download lock.
         with _download_lock:
-            for target, remote in ((checkpoint, filename), (config_path, 'config.json')):
+            for target, remote in artifacts:
                 if os.path.exists(target):
                     continue
                 if OFFLINE_MODE:
@@ -475,6 +490,8 @@ def build_model(
                         raise ValueError(f"Downloaded artifact is empty: {remote}")
                     os.replace(source, target)
 
+        # Must stay outside the `with _download_lock` block above:
+        # _download_lock is a plain Lock and download_voice_files acquires it.
         download_voice_files(repo_version=repo_version, required_count=1)
         with open(config_path, 'r', encoding='utf-8-sig') as config_file:
             config = json.load(config_file)
@@ -531,6 +548,24 @@ def build_model(
             flight.exception = failure
             flight.event.set()
 
+def _routable_voice_names(voice_files: List[Path]) -> List[str]:
+    """Return sorted voice stems whose prefix maps to a supported language.
+
+    Names that :func:`get_language_code_from_voice` would reject are dropped
+    here so they never reach a picker: selecting one downstream would raise
+    rather than produce a readable message.
+    """
+    routable = []
+    for voice_file in sorted(voice_files, key=lambda f: f.stem.lower()):
+        try:
+            get_language_code_from_voice(voice_file.stem)
+        except ValueError as e:
+            logger.warning(f"Ignoring voice file {voice_file.name}: {e}")
+            continue
+        routable.append(voice_file.stem)
+    return routable
+
+
 def list_available_voices() -> List[str]:
     """List all available voice models"""
     # Use configured voices directory (see get_voices_dir)
@@ -547,7 +582,7 @@ def list_available_voices() -> List[str]:
 
     # If we found voice files, return them
     if voice_files:
-        return [f.stem for f in sorted(voice_files, key=lambda f: f.stem.lower())]
+        return _routable_voice_names(voice_files)
 
     # If no voice files in standard location, check if we need to do a one-time migration
     # This is legacy support for older installations
@@ -574,7 +609,7 @@ def list_available_voices() -> List[str]:
 
             if files_moved > 0:
                 print(f"Successfully moved {files_moved} voice files")
-                return [f.stem for f in sorted(voices_dir.glob("*.pt"), key=lambda f: f.stem.lower())]
+                return _routable_voice_names(list(voices_dir.glob("*.pt")))
 
     print("No voice files found. Please run the application again to download voices.")
     return []
@@ -630,12 +665,17 @@ def generate_speech(
 ) -> Tuple[Optional[torch.Tensor], Optional[str]]:
     """Generate speech using the Kokoro pipeline in a thread-safe manner
 
+    Convenience wrapper that collects every segment into one tensor. Callers
+    that need streaming or their own error handling should use
+    :meth:`EnhancedKPipeline.iter_speech` directly, as the bundled CLIs do.
+
+    The pipeline's language must match the voice prefix; the device is fixed
+    at :func:`build_model` time and cannot be changed here.
+
     Args:
         model: EnhancedKPipeline instance
         text: Text to synthesize
         voice: Voice name (e.g. 'af_bella')
-        lang: Language code ('a' for American English, 'b' for British English)
-        device: Device to use ('cuda' or 'cpu')
         speed: Speech speed multiplier (default: 1.0)
 
     Returns:
@@ -667,22 +707,24 @@ def generate_speech(
         # Voice cache mutation is already protected above; the generator
         # itself only reads from the cache.
         logger.info(f"Generating speech with device: {model.device}")
-        generator = model.iter_speech(
+
+        audio_segments = []
+        phoneme_segments = []
+        # The generator holds the model-family lock until closed, so it must
+        # not survive an exception raised mid-iteration.
+        with contextlib.closing(model.iter_speech(
             text,
             voice=str(voice_path),
             speed=speed,
             split_pattern=r'\n+'
-        )
-
-        audio_segments = []
-        phoneme_segments = []
-        for gs, ps, audio in generator:
-            if audio is not None:
-                if isinstance(audio, np.ndarray):
-                    audio = torch.from_numpy(audio).float()
-                audio_segments.append(audio)
-                if ps:
-                    phoneme_segments.append(ps)
+        )) as generator:
+            for gs, ps, audio in generator:
+                if audio is not None:
+                    if isinstance(audio, np.ndarray):
+                        audio = torch.from_numpy(audio).float()
+                    audio_segments.append(audio)
+                    if ps:
+                        phoneme_segments.append(ps)
 
         if audio_segments:
             return torch.cat(audio_segments, dim=0), "\n".join(phoneme_segments)
@@ -697,7 +739,17 @@ def generate_speech(
 
 
 def shutdown_pipelines() -> None:
-    """Idempotently reject work, drain builds/inference, and clear registries."""
+    """Idempotently reject work, drain builds/inference, and clear registries.
+
+    This is terminal, not merely idempotent: ``_shutting_down`` is never
+    cleared, so no pipeline can be rebuilt in this process afterwards. It is
+    intended for process teardown (atexit / signal handlers). Tests and
+    embedders that need a fresh registry must reimport the module.
+
+    Draining relies on every in-flight generator being closed. Consumers that
+    stop iterating early must close the generator (see ``contextlib.closing``)
+    or this call blocks on that family's lock.
+    """
     global _shutting_down
     with _registry_lock:
         if _shutting_down:

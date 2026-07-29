@@ -1,6 +1,7 @@
 import torch
 from typing import Optional, Tuple, List, Union
-from .models import build_model, generate_speech, list_available_voices, get_safe_voice_path, get_language_code_from_voice, shutdown_pipelines, get_base_dir, get_model_dir
+from .models import build_model, list_available_voices, get_safe_voice_path, get_language_code_from_voice, shutdown_pipelines, get_base_dir
+from contextlib import closing
 from tqdm.auto import tqdm
 import soundfile as sf
 from pathlib import Path
@@ -45,7 +46,6 @@ def validate_language(lang: str) -> str:
 
 # Define and validate constants
 SAMPLE_RATE = validate_sample_rate(24000)
-DEFAULT_MODEL_PATH = get_model_dir() / 'kokoro-v1_0.pth'
 DEFAULT_OUTPUT_FILE = get_base_dir() / 'output.wav'
 DEFAULT_LANGUAGE = validate_language('a')  # 'a' for American English, 'b' for British English
 DEFAULT_TEXT = "Hello, welcome to this text-to-speech test."
@@ -218,7 +218,10 @@ def main() -> None:
         # Build model
         print("\nInitializing model...")
         with tqdm(total=1, desc="Building model") as pbar:
-            model = build_model(DEFAULT_MODEL_PATH, device)
+            # None, not an explicit path: build_model resolves the managed
+            # default location and downloads it on first run. An explicit
+            # path is now treated as "this exact checkpoint must exist".
+            model = build_model(None, device)
             pbar.update(1)
 
         # Cache for voices to avoid redundant calls
@@ -328,8 +331,11 @@ def main() -> None:
                         watchdog.cancel()
                         continue
 
-                    # Process segments
-                    with tqdm(desc="Generating speech") as pbar:
+                    # Process segments. The generator owns the model-family
+                    # lock for as long as it stays open, so the timeout breaks
+                    # below must close it promptly rather than leave it
+                    # suspended for the remainder of this iteration.
+                    with closing(generator), tqdm(desc="Generating speech") as pbar:
                         for gs, ps, audio in generator:
                             # Check overall timeout
                             current_time = time.time()

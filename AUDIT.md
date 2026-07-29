@@ -63,6 +63,39 @@ input-validation findings depends on the installed Gradio major version, likewis
   language routing, concurrent construction/inference, and shutdown; a least-privilege CI workflow
   runs tests, compilation, wheel construction, installation, and entry-point checks.
 
+### 2026-07-29 — Review of the remediation commits
+
+Findings from reviewing `2be12c6` and `d87f7ed` themselves. Six issues, all introduced or left
+standing by those two commits; all resolved here.
+
+- **REG-01 (Windows console):** The regression suite failed on Windows — `UnicodeEncodeError` on the
+  first Chinese `print` under a legacy cp1252 code page — and the same crash reached users through
+  the newly added `kokoro-tts-setup` entry point. `console.enable_utf8_console()` now reconfigures
+  the streams to UTF-8 with replacement, but only when the current encoding cannot represent the
+  output. CI gained a `windows-latest` leg plus a run pinned to `PYTHONIOENCODING=cp1252` that
+  reproduces the original failure.
+- **REG-02 (download serialization):** DEAD-01 widened `_download_lock` to span `hf_hub_download`
+  itself, so the voice-download thread pool ran strictly one file at a time — 54 serialized fetches
+  on first run. The lock now covers only the existence re-check and the atomic promotion; the fetch
+  into each worker's private temporary directory is unlocked and parallel again.
+- **REG-03 (generator lock lifetime):** CONC-03 made `iter_speech` hold the model-family lock for the
+  generator's whole lifetime, but consumers abandon that generator on `break` (the Gradio
+  `max_segments` cap, the CLI timeout guards). The lock was then held through file writing and
+  format conversion, and could block `shutdown_pipelines`, which drains by acquiring every family
+  lock. All consumers now use `contextlib.closing`; a regression test asserts the lock is
+  reacquirable immediately after `close()`.
+- **REG-04 (unroutable voice names):** CORE-03 turned an unknown voice prefix from a silent English
+  default into a `ValueError`, but the raise was unguarded on paths fed by directory enumeration, so
+  a stray `.pt` file turned a dropdown selection into an unhandled traceback. `list_available_voices`
+  now filters names the router would reject and logs each one.
+- **REG-05 (explicit checkpoint):** `build_model` downloaded the repository default to whatever path
+  the caller supplied, disguising a mistyped `model_path` as a working fine-tune. An explicit path is
+  now required to exist. The CLI passed the managed default path explicitly and would have lost
+  first-run download, so it now passes `None` and lets `build_model` own path resolution.
+- **REG-06 (stale references):** Dead `generate_speech` imports across the three CLIs, its docstring
+  still documenting the removed `lang`/`device` parameters, and a Chinese guide instruction pointing
+  at the deleted `initialize_phonemizer`.
+
 ---
 
 ## Executive summary
