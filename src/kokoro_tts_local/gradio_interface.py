@@ -407,8 +407,7 @@ def create_interface(server_name="127.0.0.1", server_port=7860, auth=None):
                 label="Status",
                 value="Ready.",
                 lines=3,
-                interactive=False,
-                show_copy_button=True
+                interactive=False
             )
 
         # Function to load a preset. Returns gr.update() (leave unchanged)
