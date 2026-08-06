@@ -8,7 +8,7 @@ from pathlib import Path
 def get_base_dir() -> Path:
     configured = os.environ.get("KOKORO_BASE_DIR")
     if configured:
-        return Path(configured).expanduser().resolve()
+        return Path(os.path.abspath(os.path.expanduser(configured)))
     if sys.platform == "win32":
         root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     elif sys.platform == "darwin":
