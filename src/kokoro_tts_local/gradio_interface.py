@@ -32,6 +32,7 @@ from pydub import AudioSegment
 import torch
 import numpy as np
 import argparse
+import inspect
 import threading
 from typing import Union, List, Optional, Tuple, Dict, Any
 from contextlib import closing
@@ -49,6 +50,10 @@ DEFAULT_SAMPLE_RATE = 24000
 MIN_SPEED = 0.1
 MAX_SPEED = 3.0
 DEFAULT_SPEED = 1.0
+# Cost-envelope budget: synthesis cost scales with len(text) and inversely
+# with speed, so only a bound on their product keeps one legal request far
+# below hours of single-worker CPU.
+MAX_COST_CHARS = 5_000
 
 # Define path type for consistent handling
 PathLike = Union[str, Path]
@@ -66,6 +71,29 @@ def validate_sample_rate(rate: int) -> int:
 CONFIG_FILE = get_base_dir() / "tts_config.json"  # Stores user preferences and paths
 DEFAULT_OUTPUT_DIR = get_base_dir() / "outputs"    # Directory for generated audio files
 SAMPLE_RATE = validate_sample_rate(24000)  # Validated sample rate
+
+# Retention budget for the outputs dir: nothing else in the package ever
+# reclaims generated files, so every served request would otherwise
+# permanently consume the KOKORO_BASE_DIR volume (and the host disk).
+MAX_OUTPUTS_DIR_BYTES = 2 * 1024 ** 3
+
+
+def enforce_output_retention(budget_bytes: int = MAX_OUTPUTS_DIR_BYTES) -> None:
+    """Delete oldest generated files until the outputs dir fits its budget."""
+    files = sorted(
+        (p for p in DEFAULT_OUTPUT_DIR.glob("tts_*.*") if p.is_file()),
+        key=lambda p: p.stat().st_mtime,
+    )
+    total = sum(p.stat().st_size for p in files)
+    for path in files:
+        if total <= budget_bytes:
+            break
+        try:
+            size = path.stat().st_size
+            path.unlink()
+            total -= size
+        except OSError:
+            pass
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -184,6 +212,7 @@ def generate_tts_with_logs(
 
         # Create output directory
         DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        enforce_output_retention()
 
         # Validate input text
         if not text or not text.strip():
@@ -217,6 +246,15 @@ def generate_tts_with_logs(
             notes.append(message)
             text = text[:MAX_CHARS] + "..."
 
+        # Synthesis cost is driven by len(text)/speed; without a budget on
+        # the product, a single legal request (5000 chars at speed 0.1) pins
+        # the only TTS worker for CPU-hours.
+        if len(text) / speed > MAX_COST_CHARS:
+            raise ValueError(
+                f"Request too heavy: len(text)/speed must be "
+                f"<= {MAX_COST_CHARS}; shorten the text or raise the speed"
+            )
+
         # Generate base filename from text
         output_format = format.lower()
         if output_format not in {'wav', 'mp3', 'aac'}:
@@ -239,6 +277,12 @@ def generate_tts_with_logs(
 
             all_audio = []
             max_segments = 100  # Safety limit for very long texts
+            # Bound retained audio directly: per-parameter limits (chars,
+            # speed) multiply with G2P digit expansion (~8x prose density),
+            # so only a cap on total output audio bounds memory. 600 s at
+            # 24 kHz float32 is ~58 MB aggregate.
+            max_samples = 600 * SAMPLE_RATE
+            total_samples = 0
             segment_count = 0
 
             # The generator owns the model-family lock until it is closed, so
@@ -260,7 +304,14 @@ def generate_tts_with_logs(
                     if audio is not None:
                         if isinstance(audio, np.ndarray):
                             audio = torch.from_numpy(audio).float()
+                        total_samples += audio.numel()
                         all_audio.append(audio)
+                        if total_samples > max_samples:
+                            message = ("Reached the total audio-length limit; "
+                                       "the audio is truncated.")
+                            print(f"Warning: {message}")
+                            notes.append(message)
+                            break
                         print(f"Generated segment: {gs}")
                         if ps:  # Only print phonemes if available
                             print(f"Phonemes: {ps}")
@@ -485,12 +536,28 @@ def create_interface(server_name="127.0.0.1", server_port=7860, auth=None):
             outputs=[output, status]
         )
 
+    # Bound the queue: gradio defaults to max_size=None (unlimited backlog)
+    # with default_concurrency_limit=1, so one client can stack unbounded
+    # pending jobs against the single TTS worker.
+    interface.queue(max_size=32)
+
     # Launch interface
     launch_kwargs = dict(
         server_name=server_name,
         server_port=server_port,
         share=False
     )
+    supported = inspect.signature(interface.launch).parameters
+    if "max_file_size" in supported:
+        # The app declares no file components, but gradio registers
+        # POST /gradio_api/upload unconditionally; without a cap a
+        # credentialed client can stream unbounded bytes into /tmp.
+        launch_kwargs["max_file_size"] = "5mb"
+    if "strict_cors" in supported:
+        # Tighten the framework's permissive origin reflection where the
+        # installed gradio supports it (the any-origin echo with
+        # credentials is an upstream gradio defect).
+        launch_kwargs["strict_cors"] = True
     if auth is not None:
         launch_kwargs["auth"] = auth
     interface.launch(**launch_kwargs)

@@ -117,8 +117,14 @@ def save_audio_with_retry(audio_data: np.ndarray, sample_rate: int, output_path:
     Returns:
         True if successful, False otherwise
     """
-    # Convert and normalize path to Path object
-    output_path = Path(output_path).resolve()
+    # Never follow a planted symlink at the output name: unlinking the
+    # requested path removes the link itself, not its target, restoring
+    # the intended fresh regular-file semantics at this name.
+    requested = Path(output_path)
+    if requested.is_symlink():
+        print(f"Removing symbolic link at output path: {requested}")
+        requested.unlink()
+    output_path = requested.resolve()
 
     # Create parent directory if it doesn't exist
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -144,6 +150,10 @@ def save_audio_with_retry(audio_data: np.ndarray, sample_rate: int, output_path:
 
             # Try to use a temporary file first, then rename it
             temp_path = output_path.with_name(f"temp_{output_path.name}")
+
+            # Do not write through a planted symlink at the temp name either
+            if temp_path.is_symlink():
+                temp_path.unlink()
 
             # Save audio file to temporary location
             print(f"Saving audio to temporary file: {temp_path}")

@@ -368,7 +368,14 @@ def save_audio(audio_data: np.ndarray, output_path: str = DEFAULT_CHINESE_OUTPUT
         True if successful, False otherwise
     """
     try:
-        output_path = Path(output_path).resolve()
+        # Never follow a planted symlink at the output name: unlinking the
+        # requested path removes the link itself, not its target, restoring
+        # the intended fresh regular-file semantics at this name.
+        requested = Path(output_path)
+        if requested.is_symlink():
+            logger.warning(f"Removing symbolic link at output path: {requested}")
+            requested.unlink()
+        output_path = requested.resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Remove existing file if it exists

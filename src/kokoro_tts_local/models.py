@@ -7,6 +7,7 @@ import json
 import re
 import contextlib
 import hashlib
+import zipfile
 from pathlib import Path
 import numpy as np
 import shutil
@@ -22,6 +23,30 @@ logger = logging.getLogger(__name__)
 
 # Safe voice name regex (alphanumeric, underscore, dash only)
 _VOICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+# Legitimate voice packs are small [N,1,256] float32 tensors (well under
+# 1 MB uncompressed). torch.load sizes one allocation per zip record from
+# the record's *declared* uncompressed size (attacker-controlled metadata)
+# and inflates it before any weights_only check applies — DEFLATE gives
+# ~1000:1, so on-disk size cannot detect it — so bound the declared total.
+MAX_VOICE_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+
+
+def _validate_voice_payload(path: Path) -> None:
+    """Reject voice artifacts that would inflate to an unbounded size."""
+    if not path.is_file():
+        raise ValueError(f"Voice path is not a regular file: {path}")
+    try:
+        with zipfile.ZipFile(path) as zf:
+            declared = sum(info.file_size for info in zf.infolist()
+                           if not info.is_dir())
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"Voice file is not a torch zip artifact: {path}") from exc
+    if declared > MAX_VOICE_UNCOMPRESSED_BYTES:
+        raise ValueError(
+            f"Voice file {path} declares {declared} uncompressed bytes "
+            f"(limit {MAX_VOICE_UNCOMPRESSED_BYTES}); refusing to load"
+        )
 
 
 def get_safe_voice_path(voice_name: str) -> Path:
@@ -46,6 +71,11 @@ def get_safe_voice_path(voice_name: str) -> Path:
         voice_path.relative_to(voices_dir)
     except ValueError as exc:
         raise ValueError(f"Voice path escapes voices directory: {voice_path}") from exc
+    # Existence-typed entries (FIFO/directory) must never reach a blocking
+    # load: opening a writer-less FIFO read-only blocks forever, and callers
+    # hold the model family lock across the load.
+    if voice_path.exists() and not voice_path.is_file():
+        raise ValueError(f"Voice path is not a regular file: {voice_path}")
     return voice_path
 
 
@@ -131,8 +161,12 @@ class EnhancedKPipeline(KPipeline):
         if voice_name in self.voices:
             return self.voices[voice_name]
 
-        if not voice_path.exists():
-            raise FileNotFoundError(f"Voice file not found: {voice_path}")
+        if not voice_path.is_file():
+            raise FileNotFoundError(
+                f"Voice file not found or not a regular file: {voice_path}"
+            )
+
+        _validate_voice_payload(voice_path)
 
         try:
             logger.info(f"Loading voice: {voice_name} from {voice_path}")
@@ -354,7 +388,7 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
                     time.sleep(delay)
 
                 voice_path = voices_dir / voice_file
-                if voice_path.exists() and voice_path.stat().st_size > 0:
+                if voice_path.is_file() and voice_path.stat().st_size > 0:
                     return voice_file, True, f"Voice file {voice_file} already exists"
 
                 # The fetch targets a private temporary directory beside the
@@ -367,14 +401,17 @@ def download_voice_files(voice_files: Optional[List[str]] = None, repo_version: 
                         repo_id="hexgrad/Kokoro-82M",
                         filename=f"voices/{voice_file}",
                         local_dir=temp_dir,
-                        force_download=False,
+                        # Repair downloads bypass the shared-volume HF cache:
+                        # a planted cache snapshot would be copyfile'd back
+                        # into place with no content verification.
+                        force_download=True,
                         revision=repo_version,
                         local_files_only=OFFLINE_MODE
                     )
                     if Path(downloaded_path).stat().st_size == 0:
                         raise ValueError(f"Downloaded file {voice_file} has zero size")
                     with _download_lock:
-                        if voice_path.exists() and voice_path.stat().st_size > 0:
+                        if voice_path.is_file() and voice_path.stat().st_size > 0:
                             return voice_file, True, f"Voice file {voice_file} already exists"
                         os.replace(downloaded_path, voice_path)
                     return voice_file, True, f"Successfully downloaded {voice_file}"
@@ -489,8 +526,20 @@ def build_model(
         # Artifact operations alone use the download lock.
         with _download_lock:
             for target, remote in artifacts:
-                if os.path.exists(target):
+                if os.path.isfile(target) and os.path.getsize(target) > 0:
                     continue
+                if os.path.exists(target):
+                    # Existence alone is not validity: a FIFO, directory, or
+                    # empty file must be cleared so the repair path below can
+                    # re-download it — never loaded (a writer-less FIFO
+                    # blocks the open forever, wedging startup).
+                    try:
+                        os.unlink(target)
+                    except OSError as exc:
+                        raise ValueError(
+                            f"Artifact at {target} is not a regular non-empty "
+                            f"file and could not be cleared: {exc}"
+                        )
                 if OFFLINE_MODE:
                     raise ValueError(f"Required artifact not found in offline mode: {target}")
                 from huggingface_hub import hf_hub_download
@@ -499,7 +548,7 @@ def build_model(
                 with tempfile.TemporaryDirectory(dir=parent) as temp_dir:
                     source = hf_hub_download(repo_id=repo, filename=remote,
                         local_dir=temp_dir, revision=repo_version,
-                        local_files_only=OFFLINE_MODE)
+                        local_files_only=OFFLINE_MODE, force_download=True)
                     if os.path.getsize(source) == 0:
                         raise ValueError(f"Downloaded artifact is empty: {remote}")
                     os.replace(source, target)
@@ -507,8 +556,23 @@ def build_model(
         # Must stay outside the `with _download_lock` block above:
         # _download_lock is a plain Lock and download_voice_files acquires it.
         download_voice_files(repo_version=repo_version, required_count=1)
-        with open(config_path, 'r', encoding='utf-8-sig') as config_file:
-            config = json.load(config_file)
+        try:
+            with open(config_path, 'r', encoding='utf-8-sig') as config_file:
+                config = json.load(config_file)
+            # n_token feeds AlbertConfig.vocab_size and TextEncoder.n_symbols,
+            # so a poisoned-but-valid config can demand unbounded native
+            # memory at build time; bound it. Quarantine on failure so a
+            # restart cannot re-admit the same poison.
+            n_token = config.get('n_token')
+            if n_token is not None:
+                n_token = int(n_token)
+                if not 0 < n_token <= 1_000_000:
+                    raise ValueError(
+                        f"implausible n_token {n_token} in {config_path}"
+                    )
+        except Exception:
+            os.replace(config_path, config_path + '.poisoned')
+            raise
 
         model_flight_key = ('model',) + family_key
         model_owner = False
@@ -591,8 +655,9 @@ def list_available_voices() -> List[str]:
         voices_dir.mkdir(parents=True, exist_ok=True)
         return []
 
-    # Get all .pt files in the voices directory
-    voice_files = list(voices_dir.glob("*.pt"))
+    # Get all .pt files in the voices directory; directories and FIFOs
+    # named *.pt are not voices and must never be offered or loaded.
+    voice_files = [p for p in voices_dir.glob("*.pt") if p.is_file()]
 
     # If we found voice files, return them
     if voice_files:
