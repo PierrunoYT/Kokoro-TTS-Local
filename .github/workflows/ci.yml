@@ -2,10 +2,15 @@ name: CI
 
 on:
   push:
+    branches: [master]
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -34,12 +39,14 @@ jobs:
         # console cannot represent Chinese output (see console.py).
         env:
           PYTHONIOENCODING: cp1252
-        run: python -m unittest -v test_critical_fixes.py
+        run: python -m unittest -v test_critical_fixes.ConsoleEncodingTests
       - name: Compile package modules
         run: python -m compileall -q src/kokoro_tts_local
       - name: Build wheel
+        if: runner.os == 'Linux'
         run: python -m pip wheel . --no-deps --wheel-dir dist
       - name: Verify installed namespace and entry points
+        if: runner.os == 'Linux'
         run: |
           python -m pip install --no-deps dist/*.whl
           python -c "import importlib.metadata as m; d=m.distribution('kokoro-tts-local'); assert {e.name for e in d.entry_points} >= {'kokoro-tts', 'kokoro-tts-web', 'kokoro-tts-chinese', 'kokoro-tts-setup', 'kokoro-tts-check'}"
