@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.3", "wheel"]
+requires = ["setuptools>=83", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -16,8 +16,7 @@ authors = [
 dependencies = [
     "kokoro",
     "misaki",
-    "torch",
-    "torchaudio",
+    "torch==2.14.0",
     "soundfile",
     "huggingface-hub",
     "gradio",
@@ -25,7 +24,7 @@ dependencies = [
     "espeakng-loader",
     "phonemizer-fork",
     "wheel",
-    "setuptools",
+    "setuptools>=83",
     "maturin",
     "num2words",
     "spacy",
@@ -39,7 +38,6 @@ dependencies = [
     "mojimoji",
     "pyopenjtalk",
     "jamo",
-    "nltk",
     "cn2an",
     "jieba",
     "ordered-set",

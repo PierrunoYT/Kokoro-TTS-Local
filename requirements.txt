@@ -1,7 +1,6 @@
 kokoro  # Official Kokoro TTS library (v1.0 model support)
 misaki  # G2P library for Kokoro (multi-language support)
-torch  # PyTorch for model inference (for GPU support, see README.md for CUDA-specific installation)
-torchaudio  # PyTorch audio processing library
+torch==2.14.0  # Clears current PyTorch and setuptools security advisories
 soundfile  # Audio file handling
 huggingface-hub  # Model downloads from Hugging Face
 gradio  # Web interface
@@ -9,7 +8,7 @@ pydub  # For audio format conversion
 espeakng-loader  # For loading espeak-ng library
 phonemizer-fork  # For phoneme generation
 wheel  # For building packages
-setuptools  # For installing packages
+setuptools>=83  # Includes the MANIFEST.in Unicode-normalization security fix
 maturin  # Build dependency for underthesea-core
 num2words  # For number to word conversion
 spacy  # For text processing
@@ -27,7 +26,6 @@ pyopenjtalk
 
 # Korean Language Libraries
 jamo
-nltk
 
 # Mandarin Language Libraries
 cn2an
