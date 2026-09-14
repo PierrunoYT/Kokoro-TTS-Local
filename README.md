@@ -48,6 +48,13 @@ source venv/bin/activate
 pip install -e .
 ```
 
+Container builds use the audited `requirements-lock.txt` dependency snapshot.
+Regenerate it after changing `requirements.txt` with:
+
+```bash
+uv pip compile requirements.txt --python-version 3.11 --universal --output-file requirements-lock.txt
+```
+
 3. (Optional) For Japanese voices (`jf_*`/`jm_*`), download the UniDic dictionary data (~1 GB, one-time). Without it, Japanese G2P fails:
 ```bash
 python -m unidic download

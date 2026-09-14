@@ -16,14 +16,10 @@ RUN apt-get update \
         libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
-# NOTE: requirements.txt uses unpinned dependencies for flexibility.
-# For fully reproducible builds, generate a lock file:
-#   pip install -r requirements.txt && pip freeze > requirements-lock.txt
-# Then replace "requirements.txt" below with "requirements-lock.txt".
+COPY requirements-lock.txt ./
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -r requirements-lock.txt \
     && python -m spacy download en_core_web_sm \
     && python -c "import spacy; spacy.load('en_core_web_sm'); print('spaCy model OK')"
 
