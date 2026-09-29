@@ -229,11 +229,13 @@ def validate_preset(preset: Dict[str, Any]) -> bool:
         preset["speed"] = 1.0
     else:
         speed = preset["speed"]
-        if not isinstance(speed, (int, float)):
+        # bool is an int subclass, and NaN fails both range comparisons, so
+        # both would otherwise slip through the check below.
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)):
             print("Preset speed must be a number")
             return False
-        # Validate speed range
-        if speed < 0.1 or speed > 3.0:
+        # Validate speed range (written so NaN is rejected)
+        if not (0.1 <= speed <= 3.0):
             print("Preset speed must be between 0.1 and 3.0")
             return False
     
