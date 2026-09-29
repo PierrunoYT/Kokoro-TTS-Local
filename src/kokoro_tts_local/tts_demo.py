@@ -129,14 +129,11 @@ def save_audio_with_retry(audio_data: np.ndarray, sample_rate: int, output_path:
     # Create parent directory if it doesn't exist
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Try to remove the file if it exists to avoid "file in use" issues
-    try:
-        if output_path.exists():
-            print(f"Removing existing file: {output_path}")
-            output_path.unlink()
-    except Exception as e:
-        print(f"Warning: Could not remove existing file: {e}")
-        print("This might indicate the file is in use by another program.")
+    # Validate before touching the filesystem: the previous output must
+    # survive a call that has nothing valid to replace it with.
+    if audio_data is None or len(audio_data) == 0:
+        print("Error: Empty audio data, keeping any existing output file")
+        return False
 
     for attempt in range(max_retries):
         try:
@@ -161,11 +158,8 @@ def save_audio_with_retry(audio_data: np.ndarray, sample_rate: int, output_path:
 
             # If successful, rename to final location
             if temp_path.exists():
-                # Remove target file if it exists
-                if output_path.exists():
-                    output_path.unlink()
-                # Rename temp file to target file
-                temp_path.rename(output_path)
+                # Atomically replace the target (overwrites on Windows too)
+                os.replace(temp_path, output_path)
                 print(f"Successfully renamed temporary file to: {output_path}")
 
             return True
