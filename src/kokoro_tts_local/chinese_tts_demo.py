@@ -378,12 +378,20 @@ def save_audio(audio_data: np.ndarray, output_path: str = DEFAULT_CHINESE_OUTPUT
         output_path = requested.resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Remove existing file if it exists
-        if output_path.exists():
-            output_path.unlink()
+        if audio_data is None or len(audio_data) == 0:
+            raise ValueError("Empty audio data")
 
         logger.info(f"保存音频到 (Saving audio to): {output_path}")
-        sf.write(str(output_path), audio_data, SAMPLE_RATE)
+        # Write beside the target, then replace atomically: a failed write
+        # must not destroy the previous output.
+        temp_path = output_path.with_name(f"temp_{output_path.name}")
+        if temp_path.is_symlink():
+            temp_path.unlink()
+        try:
+            sf.write(str(temp_path), audio_data, SAMPLE_RATE)
+            os.replace(temp_path, output_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
         print(f"✓ 音频已保存 (Audio saved to): {output_path}")
         return True
 
