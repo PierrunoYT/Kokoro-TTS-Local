@@ -46,7 +46,7 @@ class DependencyChecker:
     
     def check_python_version(self) -> bool:
         """Check if Python version is compatible"""
-        min_python = (3, 8)
+        min_python = (3, 10)  # keep in sync with requires-python in pyproject.toml
         current_python = sys.version_info[:2]
         
         if current_python < min_python:
