@@ -134,7 +134,8 @@ def download_model() -> bool:
     model_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Check if already exists
-    if model_path.exists():
+    # An empty file is a failed earlier download, not an installed model
+    if model_path.is_file() and model_path.stat().st_size > 0:
         size_mb = model_path.stat().st_size / (1024 * 1024)
         print(f"✓ 模型文件已存在 (Model already exists): {model_path}")
         print(f"  大小 (Size): {size_mb:.1f} MB")
@@ -165,7 +166,7 @@ def download_config() -> bool:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Check if already exists
-    if config_path.exists():
+    if config_path.is_file() and config_path.stat().st_size > 0:
         print(f"✓ 配置文件已存在 (Config already exists): {config_path}")
         return True
     
