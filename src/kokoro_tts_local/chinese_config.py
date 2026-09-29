@@ -8,6 +8,7 @@ It handles Chinese-specific phonemization, text processing, and voice management
 
 import os
 import json
+import copy
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
@@ -176,8 +177,10 @@ class ChineseTTSConfig:
     def _load_default_config(self) -> Dict[str, Any]:
         """Load default configuration values for Chinese TTS"""
         return {
-            "model": CHINESE_MODEL_CONFIG,
-            "voices": CHINESE_VOICES,
+            # Deep copies: _merge_config and set() mutate this dict in place,
+            # which would otherwise rewrite the module-level constants.
+            "model": copy.deepcopy(CHINESE_MODEL_CONFIG),
+            "voices": copy.deepcopy(CHINESE_VOICES),
             "phonemizer": {
                 "backend": "espeak-ng",
                 "language": "zh",  # Chinese language code for espeak
