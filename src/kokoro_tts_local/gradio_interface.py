@@ -347,6 +347,10 @@ def generate_tts_with_logs(
             output_path = DEFAULT_OUTPUT_DIR / f"{base_name}.{output_format}"
             converted = convert_audio(wav_path, output_path, output_format)
             if converted is None:
+                # Neither file is returned to the caller, so don't leave the
+                # intermediate wav (or a partial conversion) in the outputs dir.
+                wav_path.unlink(missing_ok=True)
+                output_path.unlink(missing_ok=True)
                 raise RuntimeError(
                     f"Conversion to {output_format} failed. This usually means "
                     "FFmpeg is not installed or not on PATH."
