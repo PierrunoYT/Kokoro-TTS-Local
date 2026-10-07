@@ -7,6 +7,7 @@ It handles Chinese-specific phonemization, text processing, and voice management
 """
 
 import os
+import re
 import json
 import copy
 from pathlib import Path
@@ -18,6 +19,14 @@ logger = logging.getLogger(__name__)
 
 # Chinese language code
 CHINESE_LANG_CODE = 'z'
+
+# Kokoro truncates each segment's phonemes at 510. Mandarin runs at roughly
+# 4-5 phoneme characters per hanzi, so 80 characters leaves headroom.
+SYNTHESIS_SEGMENT_CHARS = 80
+_SENTENCE_MARKS = '。！？!?；;…'
+_CLAUSE_MARKS = '，,、：:'
+# Closing quotes/brackets stay attached to the sentence they end.
+_CLOSERS = '[”’」』）)"\']'
 
 # Chinese Model Configuration
 CHINESE_MODEL_CONFIG = {
@@ -131,6 +140,46 @@ class ChineseTextProcessor:
         lines = [normalize_line(line) for line in text.split('\n')]
         return '\n'.join(line for line in lines if line).strip()
     
+    @staticmethod
+    def break_long_lines(text: str, max_length: int = SYNTHESIS_SEGMENT_CHARS) -> str:
+        """Break lines longer than ``max_length`` into newline-separated pieces.
+
+        Kokoro's non-English chunker only splits on ASCII ``.!?`` and then
+        truncates each chunk's phonemes to 510, so a long paragraph written
+        with full-width punctuation was cut off after roughly 25 seconds.
+        Lines are broken at sentence ends first, then at clause marks, and
+        hard-cut only as a last resort; short neighbours are packed back
+        together so prosody is not chopped at every comma.
+        """
+        def pieces(chunk: str, marks: str) -> List[str]:
+            pattern = rf"[^{marks}]*[{marks}]+(?:\s*{_CLOSERS})*|[^{marks}]+"
+            return [p for p in re.findall(pattern, chunk) if p.strip()]
+
+        def split(chunk: str) -> List[str]:
+            if len(chunk) <= max_length:
+                return [chunk]
+            out = []
+            for sentence in pieces(chunk, _SENTENCE_MARKS):
+                if len(sentence) <= max_length:
+                    out.append(sentence)
+                    continue
+                for clause in pieces(sentence, _CLAUSE_MARKS):
+                    out.extend(clause[i:i + max_length]
+                               for i in range(0, len(clause), max_length))
+            return out
+
+        lines = []
+        for line in text.split('\n'):
+            current = ''
+            for piece in split(line):
+                if current and len(current) + len(piece) > max_length:
+                    lines.append(current.strip())
+                    current = ''
+                current += piece
+            if current.strip():
+                lines.append(current.strip())
+        return '\n'.join(lines)
+
     @staticmethod
     def split_chinese_text(text: str, max_length: int = 100) -> List[str]:
         """Split Chinese text into proper segments for TTS processing

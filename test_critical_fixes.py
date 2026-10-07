@@ -39,6 +39,28 @@ class ChineseTextNormalizationTests(unittest.TestCase):
         self.assertEqual(normalize("你好，世界\n再见"), "你好， 世界\n再见")
         self.assertEqual(normalize("   "), "")
 
+    def test_long_paragraph_is_broken_below_truncation_limit(self):
+        """Kokoro truncates a full-width-punctuated paragraph after ~25s."""
+        brk = ChineseTextProcessor.break_long_lines
+        sentence = "今天天气很好，我们一起去公园散步吧。"
+        paragraph = sentence * 30
+
+        lines = brk(paragraph, max_length=80).split("\n")
+        self.assertGreater(len(lines), 1)
+        self.assertTrue(all(len(line) <= 80 for line in lines))
+        # Nothing is dropped, and breaks land on sentence ends.
+        self.assertEqual("".join(lines), paragraph)
+        self.assertTrue(all(line.endswith("。") for line in lines))
+
+        # Short lines and existing paragraph breaks are left alone.
+        self.assertEqual(brk("第一段。\n第二段。"), "第一段。\n第二段。")
+
+        # A sentence with no sentence-end mark falls back to clause marks,
+        # then to a hard cut.
+        clauses = "，".join(["很长的从句"] * 30)
+        self.assertTrue(all(len(l) <= 20 for l in brk(clauses, 20).split("\n")))
+        self.assertEqual("".join(brk("字" * 50, 20).split("\n")), "字" * 50)
+
 
 class ConsoleEncodingTests(unittest.TestCase):
     def test_legacy_code_page_is_upgraded_and_utf8_left_alone(self):

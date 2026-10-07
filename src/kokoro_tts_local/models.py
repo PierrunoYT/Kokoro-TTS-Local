@@ -16,6 +16,7 @@ import threading
 import warnings
 import logging
 from .paths import get_base_dir, get_voices_dir, get_model_dir, get_config_path
+from .chinese_config import ChineseTextProcessor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -30,6 +31,9 @@ _VOICE_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
 # and inflates it before any weights_only check applies — DEFLATE gives
 # ~1000:1, so on-disk size cannot detect it — so bound the declared total.
 MAX_VOICE_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+
+# Languages written with full-width punctuation (Mandarin, Japanese).
+_FULLWIDTH_LANG_CODES = {'z', 'j'}
 
 
 def _validate_voice_payload(path: Path) -> None:
@@ -194,6 +198,17 @@ class EnhancedKPipeline(KPipeline):
             raise ValueError(
                 f"Voice language {voice_lang!r} does not match pipeline language {self.lang_code!r}"
             )
+
+        # Kokoro only finds sentence boundaries at ASCII .!? for these
+        # languages, so a long full-width-punctuated line is synthesized as
+        # one over-long chunk and silently truncated. Pre-break it on the
+        # newlines the default split_pattern already splits on.
+        if (self.lang_code in _FULLWIDTH_LANG_CODES
+                and kwargs.get('split_pattern', r'\n+') == r'\n+'):
+            if args and isinstance(args[0], str):
+                args = (ChineseTextProcessor.break_long_lines(args[0]),) + args[1:]
+            elif isinstance(kwargs.get('text'), str):
+                kwargs['text'] = ChineseTextProcessor.break_long_lines(kwargs['text'])
 
         def guarded():
             with self._family_lock:
